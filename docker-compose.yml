@@ -1,0 +1,72 @@
+name: ai-hr-system
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: hr-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-hr}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-hr}
+      POSTGRES_DB: ${DB_NAME:-hr_system}
+    ports:
+      - '${DB_PORT:-5432}:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USERNAME:-hr} -d ${DB_NAME:-hr_system}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: hr-redis
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes', '--maxmemory-policy', 'noeviction']
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Local SMTP sink with a web UI at http://localhost:8025 — catches all outgoing mail in dev.
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: hr-mailpit
+    restart: unless-stopped
+    ports:
+      - '1025:1025'
+      - '8025:8025'
+    profiles: ['dev']
+
+  app:
+    build:
+      context: .
+      target: runtime
+    container_name: hr-app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      REDIS_HOST: redis
+      SMTP_HOST: mailpit
+    ports:
+      - '${PORT:-3000}:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Migrations run before the app starts so the schema is always current.
+    command: sh -c "npm run migration:run:prod && node dist/main"
+    profiles: ['full']
+
+volumes:
+  postgres_data:
+  redis_data:
