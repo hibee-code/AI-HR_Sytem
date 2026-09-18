@@ -40,6 +40,13 @@ const SAMPLE: {
     department: 'Eng',
     terminationDate: '2026-12-31',
   },
+  TASKS_DUE: {
+    firstName: 'Jane',
+    taskCount: 2,
+    overdueCount: 1,
+    taskSummary:
+      '• Sign contract — Jane Doe (OVERDUE by 1d)\n• Laptop — Jane Doe (due today)',
+  },
   TEST: { firstName: 'Jane' },
 };
 

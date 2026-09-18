@@ -1,5 +1,6 @@
 import dataSource from '../data-source';
 import { AdminUserSeeder } from './admin-user.seeder';
+import { ChecklistTemplatesSeeder } from './checklist-templates.seeder';
 import { DepartmentsSeeder } from './departments.seeder';
 import { RolesPermissionsSeeder } from './roles-permissions.seeder';
 import type { Seeder } from './seeder.interface';
@@ -24,6 +25,7 @@ async function main(): Promise<void> {
         process.env.SEED_ADMIN_PASSWORD ?? 'ChangeMe123!',
       ),
       new DepartmentsSeeder(),
+      new ChecklistTemplatesSeeder(),
     );
   }
 

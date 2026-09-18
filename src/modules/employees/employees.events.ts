@@ -36,7 +36,8 @@ export class EmployeeStatusChangedEvent {
     public readonly fromStatus: string,
     public readonly toStatus: string,
     public readonly effectiveDate: string,
-    public readonly actorUserId: string,
+    /** null = automated */
+    public readonly actorUserId: string | null,
   ) {}
 }
 

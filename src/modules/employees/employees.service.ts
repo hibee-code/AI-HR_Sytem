@@ -425,10 +425,11 @@ export class EmployeesService {
     return this.findById(id);
   }
 
+  /** `actorUserId` null = automated (e.g. onboarding checklist completion). */
   async changeStatus(
     id: string,
     dto: ChangeStatusDto,
-    actorUserId: string,
+    actorUserId: string | null,
   ): Promise<Employee> {
     const emp = await this.findById(id);
     if (!STATUS_TRANSITIONS[emp.status].includes(dto.status)) {

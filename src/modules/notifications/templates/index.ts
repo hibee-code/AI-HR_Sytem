@@ -47,6 +47,12 @@ export interface TemplateData {
     department: string;
     terminationDate: string;
   };
+  TASKS_DUE: {
+    firstName: string;
+    taskCount: number;
+    overdueCount: number;
+    taskSummary: string;
+  };
   TEST: { firstName: string };
 }
 
@@ -188,6 +194,25 @@ export const TEMPLATES: { [K in TemplateName]: TemplateDef<TemplateData[K]> } =
             `<strong>${esc(d.employeeName)}</strong> (${esc(d.department)}) — last day ${esc(d.terminationDate)}.`,
           ),
         ),
+      }),
+    },
+
+    TASKS_DUE: {
+      defaultChannels: [NotificationChannel.SLACK, NotificationChannel.EMAIL],
+      email: (d, ctx) => ({
+        subject: `${d.taskCount} onboarding task${d.taskCount === 1 ? '' : 's'} need your attention${d.overdueCount ? ` (${d.overdueCount} overdue)` : ''}`,
+        text: `Hi ${d.firstName},\n\nThese tasks are due soon or overdue:\n\n${d.taskSummary}\n\nOpen ${ctx.appUrl} to complete them.`,
+        html: layout(
+          ctx,
+          'Tasks due',
+          p(`Hi ${esc(d.firstName)},`) +
+            p('These tasks are due soon or overdue:') +
+            `<pre style="white-space:pre-wrap;font-family:inherit">${esc(d.taskSummary)}</pre>` +
+            button(ctx.appUrl, 'Open my tasks'),
+        ),
+      }),
+      slack: (d) => ({
+        text: `:clipboard: *${d.taskCount} task${d.taskCount === 1 ? '' : 's'}* need your attention${d.overdueCount ? ` (${d.overdueCount} overdue)` : ''}:\n${d.taskSummary}`,
       }),
     },
 

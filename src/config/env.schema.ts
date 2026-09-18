@@ -62,6 +62,11 @@ export const envSchema = z.object({
     .default('true')
     .transform((v) => v === 'true'),
   NOTIFICATIONS_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(5),
+  /** Cron for the daily task-reminder digest (server timezone, UTC in containers). */
+  REMINDERS_CRON: z
+    .string()
+    .regex(/^(\S+\s+){4}\S+$/, 'expected a 5-field cron expression')
+    .default('0 8 * * *'),
 
   // ── Rate limiting ─────────────────────────────────────────────────────
   THROTTLE_TTL_MS: z.coerce.number().int().positive().default(60_000),

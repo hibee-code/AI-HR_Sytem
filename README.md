@@ -141,6 +141,24 @@ Bootstrap admin comes from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (`npm run 
 - `POST /notifications/test` sends a test email + DM to yourself; `GET /notifications/log`
   lists deliveries (HR/Admin).
 
+## Onboarding & offboarding
+
+- **Templates** (`/checklist-templates`, HR) hold ordered items with an *assignee rule*
+  (`EMPLOYEE`, `MANAGER`, `HR`, or any `ROLE` name), a due offset in days from the anchor date, and
+  a required flag. A department-specific active template beats the company-wide one.
+- **Checklists** start automatically: `employee.created` (status `ONBOARDING`) → onboarding
+  checklist anchored on the hire date; `employee.terminated` → offboarding anchored on the last
+  day. Tasks are copied from the template with assignees resolved to concrete logins where
+  possible; HR/role tasks stay role-addressed and appear in every holder's `GET /checklists/tasks/me`.
+- **Task updates** (`PATCH /checklists/tasks/:id`) are allowed for the assignee, holders of the
+  task's role, or `onboarding:manage`. When every *required* task is `DONE`/`SKIPPED` the checklist
+  completes and, for onboarding, the employee is moved `ONBOARDING → ACTIVE` automatically
+  (HR can still flip status manually via the employees API).
+- **Reminders**: a BullMQ job scheduler (`REMINDERS_CRON`, default 08:00 UTC) sends each assignee one
+  digest of tasks due tomorrow or overdue, at most once per task per day.
+  `POST /checklists/reminders/run` triggers it on demand.
+- Tasks carry an optional `documentId` for the documents module (stage 6).
+
 ## Environment variables
 
 See [`.env.example`](.env.example) — every variable is documented there and validated at boot.
@@ -153,7 +171,7 @@ See [`.env.example`](.env.example) — every variable is documented there and va
 | 1 | Auth, users, RBAC                       | ✅     |
 | 2 | Employees, departments, positions       | ✅     |
 | 3 | Queues + notifications (Slack, email)   | ✅     |
-| 4 | Onboarding / offboarding                |        |
+| 4 | Onboarding / offboarding                | ✅     |
 | 5 | Leave & attendance                      |        |
 | 6 | Documents (Cloudinary)                  |        |
 | 7 | Performance reviews                     |        |

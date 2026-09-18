@@ -8,6 +8,7 @@ import { configureApp } from './app.setup';
 import { QUEUES } from './infrastructure/queue/queue.constants';
 import { REDIS_CLIENT } from './infrastructure/redis/redis.constants';
 import { NotificationsProcessor } from './modules/notifications/notifications.processor';
+import { OnboardingProcessor } from './modules/onboarding/onboarding.processor';
 
 /**
  * Boots the whole application graph with the database and Redis replaced by
@@ -64,6 +65,14 @@ describe('AppModule wiring', () => {
       .overrideProvider(getQueueToken(QUEUES.NOTIFICATIONS))
       .useValue({ add: jest.fn(), close: jest.fn() })
       .overrideProvider(NotificationsProcessor)
+      .useValue({})
+      .overrideProvider(getQueueToken(QUEUES.ONBOARDING))
+      .useValue({
+        add: jest.fn(),
+        close: jest.fn(),
+        upsertJobScheduler: jest.fn(),
+      })
+      .overrideProvider(OnboardingProcessor)
       .useValue({})
       .compile();
 
