@@ -4,8 +4,9 @@ import Redis, { RedisOptions } from 'ioredis';
 import type { Env } from '../../config/env.schema';
 import { RedisThrottlerStorage } from './redis-throttler.storage';
 
-export const REDIS_CLIENT = Symbol('REDIS_CLIENT');
-export const REDIS_OPTIONS = Symbol('REDIS_OPTIONS');
+import { REDIS_CLIENT, REDIS_OPTIONS } from './redis.constants';
+
+export { REDIS_CLIENT, REDIS_OPTIONS } from './redis.constants';
 
 /** Plain options object; BullMQ builds its own connections from this. */
 export function buildRedisOptions(

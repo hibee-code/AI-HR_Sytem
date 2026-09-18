@@ -31,6 +31,8 @@ export function buildDataSourceOptions(env: DatabaseEnv): DataSourceOptions {
     database: env.DB_NAME,
     ssl: env.DB_SSL ? { rejectUnauthorized: false } : false,
     synchronize: false,
+    // gen_random_uuid() from pgcrypto (built into PG13+); avoids uuid-ossp.
+    uuidExtension: 'pgcrypto',
     logging: env.DB_LOGGING,
     entities: [path.join(__dirname, '..', 'modules', '**', '*.entity' + ext)],
     migrations: [path.join(__dirname, 'migrations', '*' + ext)],

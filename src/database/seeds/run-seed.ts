@@ -1,18 +1,28 @@
 import dataSource from '../data-source';
+import { AdminUserSeeder } from './admin-user.seeder';
+import { RolesPermissionsSeeder } from './roles-permissions.seeder';
 import type { Seeder } from './seeder.interface';
 
 /**
- * `npm run seed` — populates a local/dev database.
- * Each stage registers its seeders here (roles & permissions, admin user,
- * sample departments, ...). Never run against production.
+ * `npm run seed` — populates a local/dev database. Every seeder is
+ * idempotent. Refuses to run in production: use `seed:catalogue` there.
  */
-const seeders: Seeder[] = [
-  // stage 1: RolesAndPermissionsSeeder, AdminUserSeeder
-];
-
 async function main(): Promise<void> {
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('Refusing to seed a production database');
+  const catalogueOnly = process.argv.includes('--catalogue-only');
+  if (process.env.NODE_ENV === 'production' && !catalogueOnly) {
+    throw new Error(
+      'Refusing to seed a production database. Use `npm run seed:catalogue` to sync roles/permissions only.',
+    );
+  }
+
+  const seeders: Seeder[] = [new RolesPermissionsSeeder()];
+  if (!catalogueOnly) {
+    seeders.push(
+      new AdminUserSeeder(
+        process.env.SEED_ADMIN_EMAIL ?? 'admin@example.com',
+        process.env.SEED_ADMIN_PASSWORD ?? 'ChangeMe123!',
+      ),
+    );
   }
 
   await dataSource.initialize();
@@ -21,9 +31,6 @@ async function main(): Promise<void> {
       process.stdout.write(`→ ${seeder.name} ... `);
       await seeder.run(dataSource);
       process.stdout.write('done\n');
-    }
-    if (seeders.length === 0) {
-      console.log('No seeders registered yet.');
     }
   } finally {
     await dataSource.destroy();

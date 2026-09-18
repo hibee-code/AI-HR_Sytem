@@ -1,11 +1,10 @@
-import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
+import { configureApp } from './app.setup';
 import type { Env } from './config/env.schema';
 
 async function bootstrap(): Promise<void> {
@@ -21,32 +20,8 @@ async function bootstrap(): Promise<void> {
   const prefix = config.get('API_PREFIX', { infer: true });
   const isProd = config.get('NODE_ENV', { infer: true }) === 'production';
 
-  // ── HTTP hardening ────────────────────────────────────────────────────
-  app.set('trust proxy', 1); // correct client IPs behind a reverse proxy (rate limiting)
-  app.use(helmet());
-  app.enableCors({
-    origin: config.get('CORS_ORIGINS', { infer: true }),
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-Id'],
-    exposedHeaders: ['X-Correlation-Id'],
-  });
+  configureApp(app);
 
-  // ── Routing ───────────────────────────────────────────────────────────
-  app.setGlobalPrefix(prefix, { exclude: ['health/live', 'health/ready'] });
-  app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
-
-  // ── Validation ────────────────────────────────────────────────────────
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true, // strip unknown properties
-      forbidNonWhitelisted: true, // ...and reject them loudly
-      transform: true, // plain JSON → DTO class instances
-      transformOptions: { enableImplicitConversion: false },
-    }),
-  );
-
-  // ── Swagger ───────────────────────────────────────────────────────────
   if (!isProd) {
     const doc = new DocumentBuilder()
       .setTitle('AI HR System API')
@@ -62,9 +37,6 @@ async function bootstrap(): Promise<void> {
       swaggerOptions: { persistAuthorization: true },
     });
   }
-
-  // ── Lifecycle ─────────────────────────────────────────────────────────
-  app.enableShutdownHooks();
 
   await app.listen(port);
   logger.log(

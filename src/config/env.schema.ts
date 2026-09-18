@@ -65,6 +65,10 @@ export const envSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(32, 'must be at least 32 characters'),
   JWT_REFRESH_TTL: duration.default('7d'),
 
+  // ── Seeding (dev only) ────────────────────────────────────────────────
+  SEED_ADMIN_EMAIL: z.email().default('admin@example.com'),
+  SEED_ADMIN_PASSWORD: z.string().min(10).default('ChangeMe123!'),
+
   // ── Cloudinary (optional until the documents module is enabled) ───────
   CLOUDINARY_CLOUD_NAME: z.string().optional(),
   CLOUDINARY_API_KEY: z.string().optional(),

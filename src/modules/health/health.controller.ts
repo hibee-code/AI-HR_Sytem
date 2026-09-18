@@ -1,4 +1,4 @@
-import { Controller, Get, Inject } from '@nestjs/common';
+import { Controller, Get, Inject, VERSION_NEUTRAL } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   HealthCheck,
@@ -9,11 +9,14 @@ import {
 } from '@nestjs/terminus';
 import Redis from 'ioredis';
 import { SkipThrottle } from '@nestjs/throttler';
-import { REDIS_CLIENT } from '../../infrastructure/redis/redis.module';
+import { Public } from '../../common/decorators/public.decorator';
+import { REDIS_CLIENT } from '../../infrastructure/redis/redis.constants';
 
 @ApiTags('health')
+@Public()
 @SkipThrottle()
-@Controller('health')
+// Outside the /api prefix (see app.setup.ts) and unversioned: probes live at /health/*.
+@Controller({ path: 'health', version: VERSION_NEUTRAL })
 export class HealthController {
   constructor(
     private readonly health: HealthCheckService,

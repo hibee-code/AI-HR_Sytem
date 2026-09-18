@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
 import { AppConfigModule } from './config/config.module';
@@ -9,7 +10,12 @@ import { DatabaseModule } from './database/database.module';
 import { LoggerModule } from './infrastructure/logger/logger.module';
 import { RedisThrottlerStorage } from './infrastructure/redis/redis-throttler.storage';
 import { RedisModule } from './infrastructure/redis/redis.module';
+import { AuthModule } from './modules/auth/auth.module';
+import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { HealthModule } from './modules/health/health.module';
+import { PermissionsGuard } from './modules/rbac/guards/permissions.guard';
+import { RbacModule } from './modules/rbac/rbac.module';
+import { UsersModule } from './modules/users/users.module';
 
 @Module({
   imports: [
@@ -18,6 +24,7 @@ import { HealthModule } from './modules/health/health.module';
     LoggerModule,
     DatabaseModule,
     RedisModule,
+    EventEmitterModule.forRoot({ wildcard: false, maxListeners: 20 }),
     ThrottlerModule.forRootAsync({
       imports: [RedisModule],
       inject: [ConfigService, RedisThrottlerStorage],
@@ -38,9 +45,15 @@ import { HealthModule } from './modules/health/health.module';
 
     // ── Feature modules (added one stage at a time) ────────────────────────
     HealthModule,
+    RbacModule,
+    UsersModule,
+    AuthModule,
   ],
   providers: [
+    // Global guards run in this order: rate limit → authenticate → authorise.
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: PermissionsGuard },
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
   ],
 })

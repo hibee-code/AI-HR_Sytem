@@ -54,7 +54,11 @@ docker compose --profile full up --build
 | `npm run migration:run` / `migration:revert` / `migration:show` | Apply / roll back / list    |
 | `npm run migration:run:prod` | Same, against compiled `dist/` (used by the container)    |
 | `npm run seed`               | Idempotent dev seeders (refuses in production)            |
+| `npm run seed:catalogue`     | Sync roles/permissions only — safe for production, run after deploy |
 | `npm run lint` / `format`    | oxlint / prettier                                         |
+
+> Tests run Jest with `--experimental-vm-modules` because NestJS 12 ships as ESM and is
+> `require()`d from CommonJS test code (Node ≥ 24.9 handles this natively).
 
 ## Project layout
 
@@ -77,6 +81,27 @@ Conventions:
 - **Every response error** has the same envelope (`statusCode`, `error`, `message`, `path`, `timestamp`, `correlationId`).
 - **Env is the only config source.** Add new variables to `src/config/env.schema.ts` *and* `.env.example`.
 
+## Authentication & authorisation
+
+- **Invite-only.** `POST /auth/invite` (needs `user:invite`) creates an `INVITED` user and emits
+  `auth.user.invited` with a one-time token (7-day TTL). The notifications module (stage 3) will
+  email it; until then the dev listener prints the link to the log. `POST /auth/accept-invite`
+  sets the password and returns a session.
+- **Sessions.** `POST /auth/login` → `{ accessToken (15 m JWT), refreshToken (7 d, opaque) }`.
+  `POST /auth/refresh` rotates: the old refresh token is revoked and a successor is issued in the
+  same *family*. Presenting a revoked token again is treated as theft and revokes the whole family.
+- **Kill switches.** Suspending a user, changing roles, or changing a password invalidates the
+  Redis-cached auth context, so the change bites on the very next request; a password change also
+  rejects every access token issued before it (`iat` check) and revokes all refresh tokens.
+- **Guards** run globally in order *throttle → JWT → permissions*. Routes opt out with
+  `@Public()`; routes declare what they need with `@RequirePermissions(PERMISSIONS.X)`.
+  Roles are seeded bundles of permissions (`src/modules/rbac/permissions.catalogue.ts`);
+  custom roles can be created via `POST /roles`.
+- **Secrets at rest.** Passwords: argon2id. Refresh / one-time tokens: SHA-256 hashes only.
+
+Seeded roles: `ADMIN`, `HR_MANAGER`, `MANAGER`, `EMPLOYEE`, `RECRUITER`.
+Bootstrap admin comes from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (`npm run seed`).
+
 ## Environment variables
 
 See [`.env.example`](.env.example) — every variable is documented there and validated at boot.
@@ -86,7 +111,7 @@ See [`.env.example`](.env.example) — every variable is documented there and va
 | # | Stage                                   | Status |
 | - | --------------------------------------- | ------ |
 | 0 | Scaffold, config, logging, DB, health   | ✅     |
-| 1 | Auth, users, RBAC                       |        |
+| 1 | Auth, users, RBAC                       | ✅     |
 | 2 | Employees, departments, positions       |        |
 | 3 | Queues + notifications (Slack, email)   |        |
 | 4 | Onboarding / offboarding                |        |
