@@ -1,7 +1,10 @@
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { IS_PUBLIC_KEY } from '../../../common/decorators/public.decorator';
-import { PERMISSIONS_KEY } from '../../../common/decorators/require-permissions.decorator';
+import {
+  ANY_PERMISSION_KEY,
+  PERMISSIONS_KEY,
+} from '../../../common/decorators/require-permissions.decorator';
 import { PERMISSIONS } from '../permissions.catalogue';
 import { PermissionsGuard } from './permissions.guard';
 
@@ -59,5 +62,44 @@ describe('PermissionsGuard', () => {
       [PERMISSIONS_KEY]: [PERMISSIONS.USER_READ],
     });
     expect(() => guard.canActivate(context)).toThrow(ForbiddenException);
+  });
+
+  it('RequireAnyPermission passes with at least one match, fails with none', () => {
+    const meta = {
+      [ANY_PERMISSION_KEY]: [
+        PERMISSIONS.EMPLOYEE_READ,
+        PERMISSIONS.EMPLOYEE_READ_DIRECTORY,
+      ],
+    };
+    expect(
+      make(meta, {
+        permissions: [PERMISSIONS.EMPLOYEE_READ_DIRECTORY],
+      }).guard.canActivate(
+        make(meta, { permissions: [PERMISSIONS.EMPLOYEE_READ_DIRECTORY] })
+          .context,
+      ),
+    ).toBe(true);
+    const none = make(meta, { permissions: [PERMISSIONS.AI_CHAT] });
+    expect(() => none.guard.canActivate(none.context)).toThrow(
+      /Requires one of/,
+    );
+  });
+
+  it('all-of and any-of combine (both must hold)', () => {
+    const meta = {
+      [PERMISSIONS_KEY]: [PERMISSIONS.USER_READ],
+      [ANY_PERMISSION_KEY]: [
+        PERMISSIONS.EMPLOYEE_READ,
+        PERMISSIONS.EMPLOYEE_READ_DIRECTORY,
+      ],
+    };
+    const ok = make(meta, {
+      permissions: [PERMISSIONS.USER_READ, PERMISSIONS.EMPLOYEE_READ],
+    });
+    expect(ok.guard.canActivate(ok.context)).toBe(true);
+    const missingAll = make(meta, { permissions: [PERMISSIONS.EMPLOYEE_READ] });
+    expect(() => missingAll.guard.canActivate(missingAll.context)).toThrow(
+      /user:read/,
+    );
   });
 });

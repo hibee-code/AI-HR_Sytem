@@ -11,6 +11,7 @@ import { LoggerModule } from './infrastructure/logger/logger.module';
 import { RedisThrottlerStorage } from './infrastructure/redis/redis-throttler.storage';
 import { RedisModule } from './infrastructure/redis/redis.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { EmployeesModule } from './modules/employees/employees.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { HealthModule } from './modules/health/health.module';
 import { PermissionsGuard } from './modules/rbac/guards/permissions.guard';
@@ -48,6 +49,7 @@ import { UsersModule } from './modules/users/users.module';
     RbacModule,
     UsersModule,
     AuthModule,
+    EmployeesModule,
   ],
   providers: [
     // Global guards run in this order: rate limit → authenticate → authorise.

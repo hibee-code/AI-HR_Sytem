@@ -8,7 +8,10 @@ import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 import type { AuthUser } from '../../../common/auth/auth-user.interface';
 import { IS_PUBLIC_KEY } from '../../../common/decorators/public.decorator';
-import { PERMISSIONS_KEY } from '../../../common/decorators/require-permissions.decorator';
+import {
+  ANY_PERMISSION_KEY,
+  PERMISSIONS_KEY,
+} from '../../../common/decorators/require-permissions.decorator';
 import type { Permission } from '../permissions.catalogue';
 
 /**
@@ -31,7 +34,12 @@ export class PermissionsGuard implements CanActivate {
         PERMISSIONS_KEY,
         targets,
       ) ?? [];
-    if (required.length === 0) return true;
+    const anyOf =
+      this.reflector.getAllAndOverride<Permission[] | undefined>(
+        ANY_PERMISSION_KEY,
+        targets,
+      ) ?? [];
+    if (required.length === 0 && anyOf.length === 0) return true;
 
     const user = context
       .switchToHttp()
@@ -41,6 +49,9 @@ export class PermissionsGuard implements CanActivate {
     const missing = required.filter((p) => !user.permissions.includes(p));
     if (missing.length > 0) {
       throw new ForbiddenException(`Missing permission: ${missing.join(', ')}`);
+    }
+    if (anyOf.length > 0 && !anyOf.some((p) => user.permissions.includes(p))) {
+      throw new ForbiddenException(`Requires one of: ${anyOf.join(', ')}`);
     }
     return true;
   }

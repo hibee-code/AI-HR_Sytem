@@ -52,13 +52,11 @@ describe('AuthService', () => {
       createInvited: jest.fn(),
     };
     tokens = {
-      issueForLogin: jest
-        .fn()
-        .mockResolvedValue({
-          accessToken: 'a',
-          refreshToken: 'r',
-          expiresIn: 900,
-        }),
+      issueForLogin: jest.fn().mockResolvedValue({
+        accessToken: 'a',
+        refreshToken: 'r',
+        expiresIn: 900,
+      }),
       rotate: jest.fn(),
       revokeAllForUser: jest.fn(),
       issueOneTime: jest

@@ -19,6 +19,9 @@ export const PERMISSIONS = {
 
   // ── Employees / org (stage 2) ─────────────────────────────────────────
   EMPLOYEE_READ_SELF: 'employee:read_self',
+  /** Org directory: names, department, position, work email. No personal data. */
+  EMPLOYEE_READ_DIRECTORY: 'employee:read_directory',
+  /** Full records for any employee (HR). Managers get full records of their reports implicitly. */
   EMPLOYEE_READ: 'employee:read',
   EMPLOYEE_CREATE: 'employee:create',
   EMPLOYEE_UPDATE: 'employee:update',
@@ -85,6 +88,7 @@ const P = PERMISSIONS;
 /** Baseline every logged-in person gets. */
 const EMPLOYEE_PERMISSIONS: Permission[] = [
   P.EMPLOYEE_READ_SELF,
+  P.EMPLOYEE_READ_DIRECTORY,
   P.DEPARTMENT_READ,
   P.LEAVE_READ_SELF,
   P.LEAVE_REQUEST,
@@ -99,7 +103,6 @@ const EMPLOYEE_PERMISSIONS: Permission[] = [
 /** Line manager: everything an employee has, plus their direct reports. */
 const MANAGER_PERMISSIONS: Permission[] = [
   ...EMPLOYEE_PERMISSIONS,
-  P.EMPLOYEE_READ,
   P.LEAVE_READ_TEAM,
   P.LEAVE_APPROVE,
   P.ATTENDANCE_READ_TEAM,
@@ -113,6 +116,7 @@ const HR_MANAGER_PERMISSIONS: Permission[] = [
   P.USER_UPDATE,
   P.USER_SUSPEND,
   P.ROLE_READ,
+  P.EMPLOYEE_READ,
   P.EMPLOYEE_CREATE,
   P.EMPLOYEE_UPDATE,
   P.EMPLOYEE_DELETE,

@@ -102,6 +102,23 @@ Conventions:
 Seeded roles: `ADMIN`, `HR_MANAGER`, `MANAGER`, `EMPLOYEE`, `RECRUITER`.
 Bootstrap admin comes from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (`npm run seed`).
 
+## Employees & organisation
+
+- **Departments** form a tree (`parent_id`); `GET /departments/tree` returns it with heads and
+  headcounts. **Positions** are job titles, optionally scoped to a department.
+- **Employees** are HR records, linked 0..1 to a login. `POST /employees` can create and invite the
+  login in the same call (`inviteLogin: { roles }`). Employee numbers are `EMP-0001…` from a
+  sequence. Every hire, promotion, transfer, manager change, status change and termination writes
+  an append-only `employment_history` row.
+- **Org chart**: `GET /employees/org-chart` follows `manager_id`. Reporting cycles are rejected.
+- **Termination** (`POST /employees/:id/terminate`) moves direct reports up to the leaver's
+  manager, clears any department headship, suspends the login and revokes its sessions.
+- **Visibility**: `employee:read` (HR) → full records for everyone. Otherwise a caller sees their
+  own full record and full records of anyone in their reporting chain; everyone else appears in
+  the directory view (`employee:read_directory`), which omits personal fields (phone, personal
+  email, date of birth, address, emergency contact, login id).
+- Salary is deliberately **not** on the employee record; it arrives with payroll (stage 8).
+
 ## Environment variables
 
 See [`.env.example`](.env.example) — every variable is documented there and validated at boot.
@@ -112,7 +129,7 @@ See [`.env.example`](.env.example) — every variable is documented there and va
 | - | --------------------------------------- | ------ |
 | 0 | Scaffold, config, logging, DB, health   | ✅     |
 | 1 | Auth, users, RBAC                       | ✅     |
-| 2 | Employees, departments, positions       |        |
+| 2 | Employees, departments, positions       | ✅     |
 | 3 | Queues + notifications (Slack, email)   |        |
 | 4 | Onboarding / offboarding                |        |
 | 5 | Leave & attendance                      |        |

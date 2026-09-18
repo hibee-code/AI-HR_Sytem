@@ -47,7 +47,9 @@ describe('TokenService', () => {
 
   beforeEach(async () => {
     em = {
-      save: jest.fn(async (_e, r: RefreshToken) => Object.assign(r, { id: 'new-id' })),
+      save: jest.fn(async (_e, r: RefreshToken) =>
+        Object.assign(r, { id: 'new-id' }),
+      ),
       update: jest.fn(),
     };
     refreshRepo = {
