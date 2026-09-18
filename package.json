@@ -31,6 +31,8 @@
     "seed:catalogue": "node dist/database/seeds/run-seed.js --catalogue-only"
   },
   "dependencies": {
+    "@bull-board/api": "^9.10.1",
+    "@bull-board/express": "^9.10.1",
     "@nestjs/bullmq": "^12.0.0",
     "@nestjs/common": "^12.0.1",
     "@nestjs/config": "^12.0.0",
@@ -42,6 +44,7 @@
     "@nestjs/terminus": "^12.0.0",
     "@nestjs/throttler": "^6.7.0",
     "@nestjs/typeorm": "^12.0.1",
+    "@slack/web-api": "^8.1.1",
     "argon2": "^0.45.1",
     "bullmq": "^6.3.6",
     "class-transformer": "^0.5.1",
@@ -50,6 +53,7 @@
     "helmet": "^8.3.0",
     "ioredis": "^5.6.1",
     "nestjs-pino": "^5.2.0",
+    "nodemailer": "^10.0.10",
     "pg": "^8.23.0",
     "pino-http": "^11.0.0",
     "reflect-metadata": "^0.2.2",
@@ -64,6 +68,7 @@
     "@types/express": "^5.0.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^24.0.0",
+    "@types/nodemailer": "^8.0.2",
     "@types/supertest": "^7.0.0",
     "jest": "^30.5.1",
     "oxlint": "^1.58.0",

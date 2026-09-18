@@ -1,10 +1,13 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { getQueueToken } from '@nestjs/bullmq';
 import { getDataSourceToken } from '@nestjs/typeorm';
 import request from 'supertest';
 import { AppModule } from './app.module';
 import { configureApp } from './app.setup';
-import { REDIS_CLIENT } from './infrastructure/redis/redis.module';
+import { QUEUES } from './infrastructure/queue/queue.constants';
+import { REDIS_CLIENT } from './infrastructure/redis/redis.constants';
+import { NotificationsProcessor } from './modules/notifications/notifications.processor';
 
 /**
  * Boots the whole application graph with the database and Redis replaced by
@@ -24,6 +27,7 @@ describe('AppModule wiring', () => {
       DB_PASSWORD: 'stub',
       DB_NAME: 'stub',
       REDIS_HOST: 'stub',
+      WORKERS_ENABLED: 'false',
       JWT_ACCESS_SECRET: 'a'.repeat(32),
       JWT_REFRESH_SECRET: 'b'.repeat(32),
     });
@@ -56,6 +60,11 @@ describe('AppModule wiring', () => {
       .useValue(fakeDataSource)
       .overrideProvider(REDIS_CLIENT)
       .useValue(fakeRedis)
+      // BullMQ opens blocking Redis connections; the e2e suite covers real delivery.
+      .overrideProvider(getQueueToken(QUEUES.NOTIFICATIONS))
+      .useValue({ add: jest.fn(), close: jest.fn() })
+      .overrideProvider(NotificationsProcessor)
+      .useValue({})
       .compile();
 
     app = moduleRef.createNestApplication({ logger: false });

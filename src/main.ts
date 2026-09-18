@@ -6,6 +6,10 @@ import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { configureApp } from './app.setup';
 import type { Env } from './config/env.schema';
+import {
+  BULL_BOARD_PATH,
+  mountBullBoard,
+} from './infrastructure/queue/bull-board';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -36,12 +40,13 @@ async function bootstrap(): Promise<void> {
     SwaggerModule.setup(`${prefix}/docs`, app, document, {
       swaggerOptions: { persistAuthorization: true },
     });
+    mountBullBoard(app); // unauthenticated: dev only
   }
 
   await app.listen(port);
   logger.log(
     `Listening on http://localhost:${port}/${prefix}/v1` +
-      (isProd ? '' : `  (docs: /${prefix}/docs)`),
+      (isProd ? '' : `  (docs: /${prefix}/docs, queues: ${BULL_BOARD_PATH})`),
   );
 }
 

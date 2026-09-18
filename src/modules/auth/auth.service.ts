@@ -212,7 +212,7 @@ export class AuthService {
     await this.rbac.invalidateAuthUser(user.id);
     this.events.emit(
       AUTH_EVENTS.PASSWORD_CHANGED,
-      new PasswordChangedEvent(user.id, user.email),
+      new PasswordChangedEvent(user.id, user.email, user.firstName),
     );
   }
 

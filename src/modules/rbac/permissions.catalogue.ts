@@ -16,6 +16,8 @@ export const PERMISSIONS = {
   USER_SUSPEND: 'user:suspend',
   ROLE_READ: 'role:read',
   ROLE_MANAGE: 'role:manage',
+  NOTIFICATION_READ_LOG: 'notification:read_log',
+  NOTIFICATION_SEND_TEST: 'notification:send_test',
 
   // ── Employees / org (stage 2) ─────────────────────────────────────────
   EMPLOYEE_READ_SELF: 'employee:read_self',
@@ -116,6 +118,7 @@ const HR_MANAGER_PERMISSIONS: Permission[] = [
   P.USER_UPDATE,
   P.USER_SUSPEND,
   P.ROLE_READ,
+  P.NOTIFICATION_READ_LOG,
   P.EMPLOYEE_READ,
   P.EMPLOYEE_CREATE,
   P.EMPLOYEE_UPDATE,

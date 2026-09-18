@@ -14,6 +14,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { EmployeesModule } from './modules/employees/employees.module';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard';
 import { HealthModule } from './modules/health/health.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 import { PermissionsGuard } from './modules/rbac/guards/permissions.guard';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { UsersModule } from './modules/users/users.module';
@@ -50,6 +51,7 @@ import { UsersModule } from './modules/users/users.module';
     UsersModule,
     AuthModule,
     EmployeesModule,
+    NotificationsModule,
   ],
   providers: [
     // Global guards run in this order: rate limit → authenticate → authorise.

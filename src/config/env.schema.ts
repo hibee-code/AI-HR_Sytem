@@ -23,6 +23,7 @@ export const envSchema = z.object({
     .default('development'),
   PORT: port.default(3000),
   API_PREFIX: z.string().default('api'),
+  APP_NAME: z.string().default('HR System'),
   APP_URL: z.url().default('http://localhost:3000'),
   CORS_ORIGINS: z
     .string()
@@ -54,6 +55,13 @@ export const envSchema = z.object({
     .optional()
     .transform((v) => v || undefined),
   REDIS_DB: z.coerce.number().int().min(0).default(0),
+
+  // ── Background workers ────────────────────────────────────────────────
+  WORKERS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+  NOTIFICATIONS_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(5),
 
   // ── Rate limiting ─────────────────────────────────────────────────────
   THROTTLE_TTL_MS: z.coerce.number().int().positive().default(60_000),

@@ -35,6 +35,7 @@ npm run start:dev
 - Swagger: <http://localhost:3000/api/docs>
 - Health: `/health/live`, `/health/ready`
 - Mailpit (caught emails): <http://localhost:8025>
+- Bull Board (queues, dev only, unauthenticated): <http://localhost:3000/admin/queues>
 
 Run everything in containers instead (app image included):
 
@@ -119,6 +120,27 @@ Bootstrap admin comes from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (`npm run 
   email, date of birth, address, emergency contact, login id).
 - Salary is deliberately **not** on the employee record; it arrives with payroll (stage 8).
 
+## Notifications
+
+- Modules never talk to SMTP or Slack directly. They emit domain events (`auth.*`, `employee.*`);
+  listeners in `src/modules/notifications/listeners/` turn those into `NotificationsService.notify()`
+  calls, which write a `notification_log` row per channel and enqueue a BullMQ job (5 attempts,
+  exponential backoff). `NotificationsProcessor` delivers and updates the row
+  (`QUEUED → SENT | FAILED | SKIPPED`).
+- **Templates** live in `src/modules/notifications/templates/index.ts` as typed render functions
+  (email subject/text/html + Slack text). Adding a template = adding an entry there.
+- **Recipients** are a `userId` (email from the account, Slack id from preferences — resolved
+  once by email via `users.lookupByEmail` and cached), a raw `email`, or a `slackChannel`.
+- **Preferences**: `GET|PUT /notifications/preferences/me` (`emailEnabled`, `slackEnabled`,
+  `slackUserId`). Security emails (password changed) bypass preferences.
+- **Idempotency**: pass a `dedupeKey`; a repeat is ignored at the log's unique index.
+  Log payloads never contain links or tokens (keys ending in `url`/`token` are redacted).
+- **Workers** run in-process. `WORKERS_ENABLED=false` makes an instance enqueue-only.
+  Slack needs a bot token with `chat:write`, `im:write`, `users:read.email`; without
+  `SLACK_BOT_TOKEN` Slack deliveries are logged as `SKIPPED`.
+- `POST /notifications/test` sends a test email + DM to yourself; `GET /notifications/log`
+  lists deliveries (HR/Admin).
+
 ## Environment variables
 
 See [`.env.example`](.env.example) — every variable is documented there and validated at boot.
@@ -130,7 +152,7 @@ See [`.env.example`](.env.example) — every variable is documented there and va
 | 0 | Scaffold, config, logging, DB, health   | ✅     |
 | 1 | Auth, users, RBAC                       | ✅     |
 | 2 | Employees, departments, positions       | ✅     |
-| 3 | Queues + notifications (Slack, email)   |        |
+| 3 | Queues + notifications (Slack, email)   | ✅     |
 | 4 | Onboarding / offboarding                |        |
 | 5 | Leave & attendance                      |        |
 | 6 | Documents (Cloudinary)                  |        |

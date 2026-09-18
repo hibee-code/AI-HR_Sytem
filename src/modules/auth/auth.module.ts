@@ -3,7 +3,6 @@ import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { RbacModule } from '../rbac/rbac.module';
 import { UsersModule } from '../users/users.module';
-import { AuthDevListener } from './auth-dev.listener';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { OneTimeToken } from './entities/one-time-token.entity';
@@ -21,7 +20,7 @@ import { TokenService } from './token.service';
     RbacModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, TokenService, AuthDevListener, JwtAuthGuard],
+  providers: [AuthService, TokenService, JwtAuthGuard],
   exports: [AuthService, TokenService, JwtAuthGuard],
 })
 export class AuthModule {}
