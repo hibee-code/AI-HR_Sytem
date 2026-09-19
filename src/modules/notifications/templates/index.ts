@@ -53,6 +53,29 @@ export interface TemplateData {
     overdueCount: number;
     taskSummary: string;
   };
+  LEAVE_REQUESTED: {
+    employeeName: string;
+    leaveType: string;
+    startDate: string;
+    endDate: string;
+    days: number;
+    reason: string;
+  };
+  LEAVE_DECIDED: {
+    firstName: string;
+    leaveType: string;
+    startDate: string;
+    endDate: string;
+    days: number;
+    decision: string;
+    note: string;
+  };
+  LEAVE_CANCELLED: {
+    employeeName: string;
+    leaveType: string;
+    startDate: string;
+    endDate: string;
+  };
   TEST: { firstName: string };
 }
 
@@ -213,6 +236,64 @@ export const TEMPLATES: { [K in TemplateName]: TemplateDef<TemplateData[K]> } =
       }),
       slack: (d) => ({
         text: `:clipboard: *${d.taskCount} task${d.taskCount === 1 ? '' : 's'}* need your attention${d.overdueCount ? ` (${d.overdueCount} overdue)` : ''}:\n${d.taskSummary}`,
+      }),
+    },
+
+    LEAVE_REQUESTED: {
+      defaultChannels: [NotificationChannel.SLACK, NotificationChannel.EMAIL],
+      email: (d, ctx) => ({
+        subject: `Leave request from ${d.employeeName}: ${d.leaveType}, ${d.startDate} → ${d.endDate}`,
+        text: `${d.employeeName} requested ${d.days} day(s) of ${d.leaveType} from ${d.startDate} to ${d.endDate}.${d.reason ? `\nReason: ${d.reason}` : ''}\n\nReview it at ${ctx.appUrl}.`,
+        html: layout(
+          ctx,
+          'Leave request',
+          p(
+            `<strong>${esc(d.employeeName)}</strong> requested <strong>${d.days}</strong> day(s) of ${esc(d.leaveType)} from <strong>${esc(d.startDate)}</strong> to <strong>${esc(d.endDate)}</strong>.`,
+          ) +
+            (d.reason ? p(`Reason: ${esc(d.reason)}`) : '') +
+            button(ctx.appUrl, 'Review request'),
+        ),
+      }),
+      slack: (d) => ({
+        text: `:palm_tree: *${d.employeeName}* requested ${d.days} day(s) of ${d.leaveType}: ${d.startDate} → ${d.endDate}${d.reason ? ` — _${d.reason}_` : ''}`,
+      }),
+    },
+
+    LEAVE_DECIDED: {
+      defaultChannels: [NotificationChannel.SLACK, NotificationChannel.EMAIL],
+      email: (d, ctx) => ({
+        subject: `Your ${d.leaveType} request was ${d.decision}`,
+        text: `Hi ${d.firstName},\n\nYour ${d.leaveType} request (${d.startDate} → ${d.endDate}, ${d.days} day(s)) was ${d.decision}.${d.note ? `\nNote: ${d.note}` : ''}`,
+        html: layout(
+          ctx,
+          `Leave ${d.decision}`,
+          p(`Hi ${esc(d.firstName)},`) +
+            p(
+              `Your ${esc(d.leaveType)} request (<strong>${esc(d.startDate)}</strong> → <strong>${esc(d.endDate)}</strong>, ${d.days} day(s)) was <strong>${esc(d.decision)}</strong>.`,
+            ) +
+            (d.note ? p(`Note: ${esc(d.note)}`) : ''),
+        ),
+      }),
+      slack: (d) => ({
+        text: `${d.decision === 'approved' ? ':white_check_mark:' : ':x:'} Your ${d.leaveType} request (${d.startDate} → ${d.endDate}) was *${d.decision}*${d.note ? ` — _${d.note}_` : ''}`,
+      }),
+    },
+
+    LEAVE_CANCELLED: {
+      defaultChannels: [NotificationChannel.SLACK],
+      slack: (d) => ({
+        text: `:leftwards_arrow_with_hook: *${d.employeeName}* cancelled their ${d.leaveType} request (${d.startDate} → ${d.endDate}).`,
+      }),
+      email: (d, ctx) => ({
+        subject: `Leave cancelled: ${d.employeeName}`,
+        text: `${d.employeeName} cancelled their ${d.leaveType} request (${d.startDate} → ${d.endDate}).`,
+        html: layout(
+          ctx,
+          'Leave cancelled',
+          p(
+            `<strong>${esc(d.employeeName)}</strong> cancelled their ${esc(d.leaveType)} request (${esc(d.startDate)} → ${esc(d.endDate)}).`,
+          ),
+        ),
       }),
     },
 

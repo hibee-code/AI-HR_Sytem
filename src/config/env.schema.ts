@@ -82,10 +82,19 @@ export const envSchema = z.object({
   SEED_ADMIN_EMAIL: z.email().default('admin@example.com'),
   SEED_ADMIN_PASSWORD: z.string().min(10).default('ChangeMe123!'),
 
-  // ── Cloudinary (optional until the documents module is enabled) ───────
+  // ── File storage ──────────────────────────────────────────────────────
+  STORAGE_DRIVER: z.enum(['cloudinary', 'memory']).default('cloudinary'),
   CLOUDINARY_CLOUD_NAME: z.string().optional(),
   CLOUDINARY_API_KEY: z.string().optional(),
   CLOUDINARY_API_SECRET: z.string().optional(),
+  MAX_UPLOAD_MB: z.coerce.number().int().min(1).max(100).default(10),
+  /** Lifetime of signed download links. */
+  DOWNLOAD_URL_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(30)
+    .max(3600)
+    .default(300),
 
   // ── Email ─────────────────────────────────────────────────────────────
   SMTP_HOST: z.string().default('localhost'),
@@ -120,6 +129,17 @@ export function validateEnv(raw: Record<string, unknown>): Env {
       (i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`,
     );
     throw new Error(`Invalid environment configuration:\n${lines.join('\n')}`);
+  }
+  const d = result.data;
+  if (
+    d.STORAGE_DRIVER === 'cloudinary' &&
+    (!d.CLOUDINARY_CLOUD_NAME ||
+      !d.CLOUDINARY_API_KEY ||
+      !d.CLOUDINARY_API_SECRET)
+  ) {
+    throw new Error(
+      'Invalid environment configuration:\n  - CLOUDINARY_*: required when STORAGE_DRIVER=cloudinary (use STORAGE_DRIVER=memory for local dev without an account)',
+    );
   }
   if (
     result.data.NODE_ENV === 'production' &&

@@ -192,7 +192,9 @@ describe('OnboardingService', () => {
         ['Laptop', '2026-09-30', null, 'HR_MANAGER'],
         ['30-day plan', '2026-10-01', 'u-mgr', null],
       ]);
-      expect((c as { progress: { total: number } } | null)?.progress.total).toBe(3);
+      expect(
+        (c as { progress: { total: number } } | null)?.progress.total,
+      ).toBe(3);
       expect(events.emit).toHaveBeenCalledWith(
         ONBOARDING_EVENTS.CHECKLIST_STARTED,
         expect.anything(),

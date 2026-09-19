@@ -2,6 +2,7 @@ import dataSource from '../data-source';
 import { AdminUserSeeder } from './admin-user.seeder';
 import { ChecklistTemplatesSeeder } from './checklist-templates.seeder';
 import { DepartmentsSeeder } from './departments.seeder';
+import { LeavePolicySeeder } from './leave-policy.seeder';
 import { RolesPermissionsSeeder } from './roles-permissions.seeder';
 import type { Seeder } from './seeder.interface';
 
@@ -26,6 +27,7 @@ async function main(): Promise<void> {
       ),
       new DepartmentsSeeder(),
       new ChecklistTemplatesSeeder(),
+      new LeavePolicySeeder(),
     );
   }
 

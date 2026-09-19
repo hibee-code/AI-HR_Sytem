@@ -9,6 +9,8 @@ import { QUEUES } from './infrastructure/queue/queue.constants';
 import { REDIS_CLIENT } from './infrastructure/redis/redis.constants';
 import { NotificationsProcessor } from './modules/notifications/notifications.processor';
 import { OnboardingProcessor } from './modules/onboarding/onboarding.processor';
+import { LeaveProcessor } from './modules/leave/leave.processor';
+import { AttendanceProcessor } from './modules/attendance/attendance.processor';
 
 /**
  * Boots the whole application graph with the database and Redis replaced by
@@ -29,6 +31,7 @@ describe('AppModule wiring', () => {
       DB_NAME: 'stub',
       REDIS_HOST: 'stub',
       WORKERS_ENABLED: 'false',
+      STORAGE_DRIVER: 'memory',
       JWT_ACCESS_SECRET: 'a'.repeat(32),
       JWT_REFRESH_SECRET: 'b'.repeat(32),
     });
@@ -47,6 +50,11 @@ describe('AppModule wiring', () => {
       destroy: jest.fn(),
       manager: {},
     };
+    const fakeQueue = () => ({
+      add: jest.fn(),
+      close: jest.fn(),
+      upsertJobScheduler: jest.fn(),
+    });
     const fakeRedis = {
       get: jest.fn(async () => null),
       set: jest.fn(),
@@ -73,6 +81,14 @@ describe('AppModule wiring', () => {
         upsertJobScheduler: jest.fn(),
       })
       .overrideProvider(OnboardingProcessor)
+      .useValue({})
+      .overrideProvider(getQueueToken(QUEUES.LEAVE))
+      .useValue(fakeQueue())
+      .overrideProvider(LeaveProcessor)
+      .useValue({})
+      .overrideProvider(getQueueToken(QUEUES.ATTENDANCE))
+      .useValue(fakeQueue())
+      .overrideProvider(AttendanceProcessor)
       .useValue({})
       .compile();
 

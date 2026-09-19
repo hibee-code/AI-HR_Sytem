@@ -159,6 +159,49 @@ Bootstrap admin comes from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (`npm run 
   `POST /checklists/reminders/run` triggers it on demand.
 - Tasks carry an optional `documentId` for the documents module (stage 6).
 
+## Leave & attendance
+
+- **Policy** (`leave:manage_policy`): leave types (`/leave/types`) carry the yearly entitlement,
+  paid/unpaid, whether a balance is tracked, carry-over cap + expiry (`MM-DD`), and half-day
+  permission. Public holidays (`/leave/holidays`) are excluded from day counts, as are weekends.
+  Seeded: Annual 20 (carry 5 → 31 Mar), Sick 10, Unpaid (unlimited), Maternity 90, Paternity 10,
+  Compassionate 5.
+- **Balances** are per employee × type × year and provisioned lazily: full entitlement, pro-rated by
+  remaining months in the hire year, plus capped carry-over from the previous year's row.
+  `available = entitled + carriedOver (until expiry) + adjustment − used − pending`.
+  HR corrections go through `POST /leave/balances/adjust` and are audited.
+- **Requests**: employees submit (`POST /leave/requests`); days are reserved as *pending*. The
+  direct manager's login is the approver; anyone higher in the reporting chain or HR
+  (`leave:read_all`) may decide too; nobody decides their own. Approve moves pending → used;
+  reject/cancel release. Employees may cancel approved leave only before it starts.
+  Requests can't overlap, span calendar years, or contain zero working days.
+- **Status coupling**: approved leave of ≥ 30 calendar days flips the employee to `ON_LEAVE`
+  (immediately if already started, else by the 00:05 UTC daily job) and back to `ACTIVE` the day
+  after it ends.
+- **Attendance**: `POST /attendance/clock-in|clock-out` (one open session at a time),
+  `GET /attendance/me` (sessions + daily totals), HR manual records/corrections, and a monthly
+  report (`GET /attendance/report?month=YYYY-MM`) with days present, minutes, approved leave days.
+  Sessions left open > 16 h are auto-closed at 16 h by an hourly job and flagged.
+
+## Documents
+
+- **Storage** sits behind a port (`src/infrastructure/storage/storage.interface.ts`). `STORAGE_DRIVER=cloudinary`
+  uploads private assets (`type: private`) and serves them only through short-lived signed download
+  links (`DOWNLOAD_URL_TTL_SECONDS`); `STORAGE_DRIVER=memory` is for tests/local dev and persists nothing.
+- **Model**: a `document` (owner employee or company-level, category, visibility) has one or more
+  `document_versions` (provider key, MIME, bytes, SHA-256); `current_version_id` is what downloads
+  serve by default. Delete is soft; versions and files are retained.
+- **Visibility**: `PRIVATE` = owner + reporting chain + HR; `RESTRICTED` = owner + HR (payslips, ID);
+  `COMPANY` = every employee (HR-only to publish). `CONTRACT` and `PAYSLIP` are HR-issued; employees
+  can't create or replace them. Only the uploader or HR may add versions / edit / delete.
+- **Uploads** are `multipart/form-data` with a `file` field: `POST /documents` (+ `title`, `category`,
+  `visibility?`, `ownerEmployeeId?`), `POST /documents/:id/versions`, `PUT /documents/profile-photo/me`
+  (public image → `employees.photo_url`). Allowed types: PDF, Word, Excel, text/CSV/Markdown,
+  PNG/JPEG/WebP; size ≤ `MAX_UPLOAD_MB`. Downloads: `GET /documents/:id/download[?version=n]` → `{ url, expiresAt }`.
+- `POLICY` documents with `COMPANY` visibility are what the knowledge base (stage 9) ingests;
+  `kb_indexed_at` tracks that and resets whenever the content or visibility changes.
+- `checklist_tasks.document_id` and `leave_requests.attachment_document_id` are now real FKs.
+
 ## Environment variables
 
 See [`.env.example`](.env.example) — every variable is documented there and validated at boot.
@@ -172,8 +215,8 @@ See [`.env.example`](.env.example) — every variable is documented there and va
 | 2 | Employees, departments, positions       | ✅     |
 | 3 | Queues + notifications (Slack, email)   | ✅     |
 | 4 | Onboarding / offboarding                | ✅     |
-| 5 | Leave & attendance                      |        |
-| 6 | Documents (Cloudinary)                  |        |
+| 5 | Leave & attendance                      | ✅     |
+| 6 | Documents (Cloudinary)                  | ✅     |
 | 7 | Performance reviews                     |        |
 | 8 | Payroll (stub)                          |        |
 | 9 | AI knowledge base + RAG assistant       |        |

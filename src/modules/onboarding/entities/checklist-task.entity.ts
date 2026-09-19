@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 import { BaseEntity } from '../../../common/entities/base.entity';
+import { Document } from '../../documents/entities/document.entity';
 import { User } from '../../users/entities/user.entity';
 import { AssigneeRule } from './checklist-template.entity';
 import { Checklist } from './checklist.entity';
@@ -90,10 +91,14 @@ export class ChecklistTask extends BaseEntity {
   @Column({ type: 'varchar', length: 1000, nullable: true })
   notes: string | null;
 
-  /** Filled in by the documents module (stage 6); no FK yet. */
+  /** Evidence for the task (e.g. signed contract). */
   @ApiProperty({ format: 'uuid', nullable: true })
   @Column({ name: 'document_id', type: 'uuid', nullable: true })
   documentId: string | null;
+
+  @ManyToOne(() => Document, { onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'document_id' })
+  document: Document | null;
 
   @ApiProperty({ nullable: true })
   @Column({ name: 'completed_at', type: 'timestamptz', nullable: true })

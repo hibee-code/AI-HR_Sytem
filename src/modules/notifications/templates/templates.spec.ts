@@ -47,6 +47,29 @@ const SAMPLE: {
     taskSummary:
       '• Sign contract — Jane Doe (OVERDUE by 1d)\n• Laptop — Jane Doe (due today)',
   },
+  LEAVE_REQUESTED: {
+    employeeName: 'Jane Doe',
+    leaveType: 'Annual',
+    startDate: '2026-12-21',
+    endDate: '2026-12-24',
+    days: 3,
+    reason: 'Holiday',
+  },
+  LEAVE_DECIDED: {
+    firstName: 'Jane',
+    leaveType: 'Annual',
+    startDate: '2026-12-21',
+    endDate: '2026-12-24',
+    days: 3,
+    decision: 'approved',
+    note: '',
+  },
+  LEAVE_CANCELLED: {
+    employeeName: 'Jane Doe',
+    leaveType: 'Annual',
+    startDate: '2026-12-21',
+    endDate: '2026-12-24',
+  },
   TEST: { firstName: 'Jane' },
 };
 

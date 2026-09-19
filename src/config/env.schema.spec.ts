@@ -8,6 +8,7 @@ const valid = {
   REDIS_HOST: 'localhost',
   JWT_ACCESS_SECRET: 'a'.repeat(32),
   JWT_REFRESH_SECRET: 'b'.repeat(32),
+  STORAGE_DRIVER: 'memory',
 };
 
 describe('validateEnv', () => {
@@ -48,5 +49,20 @@ describe('validateEnv', () => {
     expect(() =>
       validateEnv({ ...valid, NODE_ENV: 'production', CORS_ORIGINS: '*' }),
     ).toThrow(/CORS_ORIGINS/);
+  });
+
+  it('requires Cloudinary credentials when the cloudinary driver is selected', () => {
+    expect(() =>
+      validateEnv({ ...valid, STORAGE_DRIVER: 'cloudinary' }),
+    ).toThrow(/CLOUDINARY_\*/);
+    expect(() =>
+      validateEnv({
+        ...valid,
+        STORAGE_DRIVER: 'cloudinary',
+        CLOUDINARY_CLOUD_NAME: 'c',
+        CLOUDINARY_API_KEY: 'k',
+        CLOUDINARY_API_SECRET: 's',
+      }),
+    ).not.toThrow();
   });
 });
