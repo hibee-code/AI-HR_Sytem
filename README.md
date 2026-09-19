@@ -202,6 +202,29 @@ Bootstrap admin comes from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (`npm run 
   `kb_indexed_at` tracks that and resets whenever the content or visibility changes.
 - `checklist_tasks.document_id` and `leave_requests.attachment_document_id` are now real FKs.
 
+## Performance reviews
+
+- **Cycles** (`review:manage_cycles`): period, deadlines, optional department scope, a rating scale
+  (default 1–5 with labels, editable per cycle until launch) and a competency list. Phases move
+  forward only: `DRAFT → SELF_REVIEW → MANAGER_REVIEW → CALIBRATION → CLOSED`
+  (`POST /performance/cycles/:id/launch`, then `/advance`).
+- **Launch** creates one review per non-terminated employee in scope, with the manager's login as
+  reviewer (HR can reassign). Employees write their self-assessment (`PUT /reviews/:id/self`),
+  reviewers — the designated manager, anyone above in the chain, or HR — write theirs
+  (`PUT /reviews/:id/manager`), HR calibrates the final rating during `CALIBRATION`, and closing
+  defaults any uncalibrated final rating to the manager rating and asks employees to acknowledge.
+- **Visibility**: employees never see the manager assessment or rating until the cycle is closed
+  and never see calibration notes; peer feedback reaches them anonymised after close. Reviewers see
+  feedback with names but not calibration notes; HR sees everything.
+- **Peer feedback**: the employee, reviewer or HR requests it from any logins; givers answer via
+  `PUT /performance/feedback/:id` (or decline). One request per giver per review.
+- **Goals**: employees propose (`DRAFT`), managers/HR approve or create directly (`ACTIVE`);
+  active + draft weights per employee are capped at 100 %. Owners update progress; re-scoping an
+  approved goal is the manager's job.
+- **Reminders**: a daily job (08:30 UTC) nudges pending self-reviews and reviewers within 2 days of
+  their deadline or overdue. `GET /performance/cycles/:id/report` gives per-department completion and
+  rating distribution.
+
 ## Environment variables
 
 See [`.env.example`](.env.example) — every variable is documented there and validated at boot.
@@ -217,7 +240,7 @@ See [`.env.example`](.env.example) — every variable is documented there and va
 | 4 | Onboarding / offboarding                | ✅     |
 | 5 | Leave & attendance                      | ✅     |
 | 6 | Documents (Cloudinary)                  | ✅     |
-| 7 | Performance reviews                     |        |
+| 7 | Performance reviews                     | ✅     |
 | 8 | Payroll (stub)                          |        |
 | 9 | AI knowledge base + RAG assistant       |        |
 | 10| AI resume screening                     |        |

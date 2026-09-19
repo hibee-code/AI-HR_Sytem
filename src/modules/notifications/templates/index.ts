@@ -76,6 +76,28 @@ export interface TemplateData {
     startDate: string;
     endDate: string;
   };
+  REVIEW_CYCLE_LAUNCHED: {
+    firstName: string;
+    cycleName: string;
+    selfReviewDeadline: string;
+  };
+  REVIEW_ACTION_REQUIRED: {
+    firstName: string;
+    action: string;
+    cycleName: string;
+    deadline: string;
+  };
+  REVIEW_COMPLETED: {
+    firstName: string;
+    cycleName: string;
+    ratingLabel: string;
+  };
+  FEEDBACK_REQUESTED: {
+    firstName: string;
+    aboutName: string;
+    cycleName: string;
+    deadline: string;
+  };
   TEST: { firstName: string };
 }
 
@@ -294,6 +316,86 @@ export const TEMPLATES: { [K in TemplateName]: TemplateDef<TemplateData[K]> } =
             `<strong>${esc(d.employeeName)}</strong> cancelled their ${esc(d.leaveType)} request (${esc(d.startDate)} → ${esc(d.endDate)}).`,
           ),
         ),
+      }),
+    },
+
+    REVIEW_CYCLE_LAUNCHED: {
+      defaultChannels: [NotificationChannel.SLACK, NotificationChannel.EMAIL],
+      email: (d, ctx) => ({
+        subject: `${d.cycleName}: your self-review is open`,
+        text: `Hi ${d.firstName},\n\nThe ${d.cycleName} review cycle has started. Please complete your self-review by ${d.selfReviewDeadline}.\n\n${ctx.appUrl}`,
+        html: layout(
+          ctx,
+          'Self-review open',
+          p(`Hi ${esc(d.firstName)},`) +
+            p(
+              `The <strong>${esc(d.cycleName)}</strong> review cycle has started. Please complete your self-review by <strong>${esc(d.selfReviewDeadline)}</strong>.`,
+            ) +
+            button(ctx.appUrl, 'Start self-review'),
+        ),
+      }),
+      slack: (d) => ({
+        text: `:memo: *${d.cycleName}* has started — complete your self-review by ${d.selfReviewDeadline}.`,
+      }),
+    },
+
+    REVIEW_ACTION_REQUIRED: {
+      defaultChannels: [NotificationChannel.SLACK, NotificationChannel.EMAIL],
+      email: (d, ctx) => ({
+        subject: `Reminder: ${d.action} for ${d.cycleName} by ${d.deadline}`,
+        text: `Hi ${d.firstName},\n\nPlease ${d.action} for ${d.cycleName}. Deadline: ${d.deadline}.\n\n${ctx.appUrl}`,
+        html: layout(
+          ctx,
+          'Review reminder',
+          p(`Hi ${esc(d.firstName)},`) +
+            p(
+              `Please ${esc(d.action)} for <strong>${esc(d.cycleName)}</strong>. Deadline: <strong>${esc(d.deadline)}</strong>.`,
+            ) +
+            button(ctx.appUrl, 'Open reviews'),
+        ),
+      }),
+      slack: (d) => ({
+        text: `:alarm_clock: Please ${d.action} for *${d.cycleName}* — deadline ${d.deadline}.`,
+      }),
+    },
+
+    REVIEW_COMPLETED: {
+      defaultChannels: [NotificationChannel.EMAIL],
+      email: (d, ctx) => ({
+        subject: `Your ${d.cycleName} review is ready`,
+        text: `Hi ${d.firstName},\n\nYour ${d.cycleName} review is complete (overall: ${d.ratingLabel}). Please read it and acknowledge.\n\n${ctx.appUrl}`,
+        html: layout(
+          ctx,
+          'Review complete',
+          p(`Hi ${esc(d.firstName)},`) +
+            p(
+              `Your <strong>${esc(d.cycleName)}</strong> review is complete (overall: <strong>${esc(d.ratingLabel)}</strong>). Please read it and acknowledge.`,
+            ) +
+            button(ctx.appUrl, 'View review'),
+        ),
+      }),
+      slack: (d) => ({
+        text: `:star: Your *${d.cycleName}* review is ready to read and acknowledge.`,
+      }),
+    },
+
+    FEEDBACK_REQUESTED: {
+      defaultChannels: [NotificationChannel.SLACK, NotificationChannel.EMAIL],
+      email: (d, ctx) => ({
+        subject: `Feedback requested: ${d.aboutName} (${d.cycleName})`,
+        text: `Hi ${d.firstName},\n\nYou've been asked for feedback on ${d.aboutName} for ${d.cycleName}. Please respond by ${d.deadline}.\n\n${ctx.appUrl}`,
+        html: layout(
+          ctx,
+          'Feedback requested',
+          p(`Hi ${esc(d.firstName)},`) +
+            p(
+              `You've been asked for feedback on <strong>${esc(d.aboutName)}</strong> for ${esc(d.cycleName)}. Please respond by <strong>${esc(d.deadline)}</strong>.`,
+            ) +
+            button(ctx.appUrl, 'Give feedback'),
+        ),
+      }),
+      slack: (d) => ({
+        text: `:speech_balloon: Feedback requested on *${d.aboutName}* (${d.cycleName}) — by ${d.deadline}.`,
       }),
     },
 

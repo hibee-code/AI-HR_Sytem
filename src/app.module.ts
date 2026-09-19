@@ -19,6 +19,7 @@ import { HealthModule } from './modules/health/health.module';
 import { LeaveModule } from './modules/leave/leave.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { OnboardingModule } from './modules/onboarding/onboarding.module';
+import { PerformanceModule } from './modules/performance/performance.module';
 import { PermissionsGuard } from './modules/rbac/guards/permissions.guard';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { UsersModule } from './modules/users/users.module';
@@ -60,6 +61,7 @@ import { UsersModule } from './modules/users/users.module';
     LeaveModule,
     AttendanceModule,
     DocumentsModule,
+    PerformanceModule,
   ],
   providers: [
     // Global guards run in this order: rate limit → authenticate → authorise.

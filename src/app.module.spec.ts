@@ -11,6 +11,7 @@ import { NotificationsProcessor } from './modules/notifications/notifications.pr
 import { OnboardingProcessor } from './modules/onboarding/onboarding.processor';
 import { LeaveProcessor } from './modules/leave/leave.processor';
 import { AttendanceProcessor } from './modules/attendance/attendance.processor';
+import { PerformanceProcessor } from './modules/performance/performance.processor';
 
 /**
  * Boots the whole application graph with the database and Redis replaced by
@@ -89,6 +90,10 @@ describe('AppModule wiring', () => {
       .overrideProvider(getQueueToken(QUEUES.ATTENDANCE))
       .useValue(fakeQueue())
       .overrideProvider(AttendanceProcessor)
+      .useValue({})
+      .overrideProvider(getQueueToken(QUEUES.PERFORMANCE))
+      .useValue(fakeQueue())
+      .overrideProvider(PerformanceProcessor)
       .useValue({})
       .compile();
 

@@ -70,6 +70,28 @@ const SAMPLE: {
     startDate: '2026-12-21',
     endDate: '2026-12-24',
   },
+  REVIEW_CYCLE_LAUNCHED: {
+    firstName: 'Jane',
+    cycleName: 'H2',
+    selfReviewDeadline: '2027-01-15',
+  },
+  REVIEW_ACTION_REQUIRED: {
+    firstName: 'Jane',
+    action: 'complete your self-review',
+    cycleName: 'H2',
+    deadline: '2027-01-15',
+  },
+  REVIEW_COMPLETED: {
+    firstName: 'Jane',
+    cycleName: 'H2',
+    ratingLabel: 'Meets expectations',
+  },
+  FEEDBACK_REQUESTED: {
+    firstName: 'Bob',
+    aboutName: 'Jane Doe',
+    cycleName: 'H2',
+    deadline: '2027-01-31',
+  },
   TEST: { firstName: 'Jane' },
 };
 
