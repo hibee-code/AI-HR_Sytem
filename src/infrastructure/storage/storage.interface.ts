@@ -33,6 +33,8 @@ export interface SignedUrlOptions {
 export interface StorageService {
   upload(buffer: Buffer, options: UploadOptions): Promise<StoredObject>;
   signedDownloadUrl(key: string, options: SignedUrlOptions): Promise<string>;
+  /** Server-side read of the object (ingestion pipelines). */
+  download(key: string, resourceType: StorageResourceType): Promise<Buffer>;
   delete(key: string, resourceType: StorageResourceType): Promise<void>;
 }
 

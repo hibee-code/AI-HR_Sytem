@@ -92,6 +92,12 @@ const SAMPLE: {
     cycleName: 'H2',
     deadline: '2027-01-31',
   },
+  PAYSLIP_AVAILABLE: {
+    firstName: 'Jane',
+    periodStart: '2026-10-01',
+    periodEnd: '2026-10-31',
+    payDate: '2026-10-28',
+  },
   TEST: { firstName: 'Jane' },
 };
 

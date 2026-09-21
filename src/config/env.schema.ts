@@ -78,6 +78,12 @@ export const envSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(32, 'must be at least 32 characters'),
   JWT_REFRESH_TTL: duration.default('7d'),
 
+  // ── Payroll ───────────────────────────────────────────────────────────
+  PAYROLL_CURRENCY: z
+    .string()
+    .regex(/^[A-Z]{3}$/, 'ISO 4217 code')
+    .default('NGN'),
+
   // ── Seeding (dev only) ────────────────────────────────────────────────
   SEED_ADMIN_EMAIL: z.email().default('admin@example.com'),
   SEED_ADMIN_PASSWORD: z.string().min(10).default('ChangeMe123!'),
@@ -109,11 +115,38 @@ export const envSchema = z.object({
   SLACK_DEFAULT_CHANNEL: z.string().default('#hr-notifications'),
 
   // ── AI ────────────────────────────────────────────────────────────────
+  /** fake = deterministic in-process embeddings + chat (tests, offline dev). */
+  AI_DRIVER: z.enum(['live', 'fake']).default('live'),
   HF_API_TOKEN: z.string().optional(),
   HF_EMBEDDING_MODEL: z
     .string()
     .default('sentence-transformers/all-MiniLM-L6-v2'),
+  EMBEDDING_DIMENSIONS: z.coerce.number().int().min(8).max(4096).default(384),
   HF_CHAT_MODEL: z.string().default('mistralai/Mistral-7B-Instruct-v0.3'),
+  ANTHROPIC_API_KEY: z.string().optional(),
+  ANTHROPIC_MODEL: z.string().default('claude-opus-5'),
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_MODEL: z.string().default('gpt-4o'),
+  /** Fallback order; unconfigured providers are skipped. */
+  AI_CHAT_PROVIDERS: z
+    .string()
+    .default('huggingface,anthropic,openai')
+    .transform((s) =>
+      s
+        .split(',')
+        .map((p) => p.trim().toLowerCase())
+        .filter(Boolean),
+    )
+    .pipe(z.array(z.enum(['huggingface', 'anthropic', 'openai'])).min(1)),
+  AI_MAX_OUTPUT_TOKENS: z.coerce
+    .number()
+    .int()
+    .min(256)
+    .max(16000)
+    .default(4096),
+  /** Chunks below this cosine similarity are ignored (0–1). */
+  AI_SIMILARITY_FLOOR: z.coerce.number().min(0).max(1).default(0.25),
+  AI_RETRIEVAL_TOP_K: z.coerce.number().int().min(1).max(20).default(6),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -225,6 +225,74 @@ Bootstrap admin comes from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (`npm run 
   their deadline or overdue. `GET /performance/cycles/:id/report` gives per-department completion and
   rating distribution.
 
+## Payroll
+
+- **Salary structures** are effective-dated per employee: base pay per period, currency (defaults
+  to `PAYROLL_CURRENCY`), pay frequency and typed line items (`EARNING` / `DEDUCTION`, computed as
+  `FIXED`, `PERCENT_OF_BASE` or, for deductions, `PERCENT_OF_GROSS`). Creating a new structure
+  closes the previous one, so history is preserved and a run always uses the structure in force
+  on its period end.
+- **Runs** move `DRAFT → CALCULATED → APPROVED → PAID`. `calculate` is repeatable and reports who
+  was skipped (no structure, currency mismatch); `approve` freezes the payslips, renders a PDF for
+  each as a `RESTRICTED` `PAYSLIP` document owned by the employee, and sends a
+  `PAYSLIP_AVAILABLE` email that deliberately carries no amounts. Non-draft runs can't overlap.
+- **Employees** see their own structures and payslips from approved/paid runs
+  (`GET /payroll/payslips/me`, `/payroll/payslips/:id` → `documentId` → `/documents/:id/download`).
+- **Extensibility**: the calculation is behind the `PAYROLL_CALCULATOR` token
+  (`src/modules/payroll/payroll-calculator.ts`). The default is deliberately naive — no tax bands,
+  statutory rules or pro-rating. Bind your own implementation in `PayrollModule` to replace it.
+
+## AI knowledge base & assistant
+
+- **What gets indexed**: documents with category `POLICY` and `COMPANY` visibility. Any document
+  change (new version, metadata edit, delete) emits `document.changed`; a BullMQ job on the `ai`
+  queue re-evaluates it — indexing eligible documents (text extraction for PDF/DOCX/TXT/MD/CSV →
+  LangChain recursive splitting → embeddings → `knowledge_chunks` with a pgvector column + HNSW
+  index) and removing chunks for documents that stopped qualifying. `POST /ai/knowledge-base/reindex`
+  forces one document or everything; `GET /ai/knowledge-base/status` shows counts, stale documents
+  and the chat provider chain.
+- **Retrieval**: cosine top-k (`AI_RETRIEVAL_TOP_K`) over pgvector, dropping hits below
+  `AI_SIMILARITY_FLOOR`. If nothing qualifies the assistant answers "not found" **without calling a
+  model** — no hallucinated policy, no cost.
+- **Answering** (`POST /ai/assistant/chat`): the last 8 turns of the conversation plus the retrieved
+  excerpts go to the chat model with a grounding system prompt; answers cite excerpts as `[n]`, and
+  only cited excerpts are returned as `citations`. Conversations are persisted per user
+  (`/ai/assistant/conversations`).
+- **Provider fallback chain**: `AI_CHAT_PROVIDERS` orders `huggingface`, `anthropic`, `openai`.
+  Providers without credentials are skipped; a provider that errors (network, rate limit, auth,
+  5xx, refusal, empty output) is put on a 60 s cooldown and the next one answers. Only when every
+  provider fails does the endpoint return 503. Each SDK lives in its own adapter behind the
+  `ChatModel` port (`src/infrastructure/ai/`); the Anthropic adapter uses `claude-opus-5` with
+  adaptive thinking and the server-side refusal fallback.
+- **Embeddings** come from the Hugging Face Inference API (`HF_EMBEDDING_MODEL`, 384 dims). The
+  pgvector column is sized by the migration; switching to a model with a different dimension needs a
+  migration plus a full reindex.
+- `AI_DRIVER=fake` (default in `.env.example` and tests) replaces embeddings and chat with
+  deterministic in-process fakes so the whole pipeline runs with no external calls.
+
+## Recruiting & AI résumé screening
+
+- **Openings** (`recruiting:manage`): title, department, description and a list of concrete
+  requirements — the screener scores against these and nothing else. `DRAFT → OPEN → CLOSED`;
+  only `OPEN` accepts applications.
+- **Applications** (`POST /recruiting/openings/:id/applications`, multipart `file` + candidate
+  fields): candidates are keyed by email; the résumé (PDF/DOCX/TXT/MD) is stored as a `RESUME`
+  document with `RESTRICTED` visibility and no owner, so only HR's `document:read_all` or the
+  recruiting endpoints (`GET /recruiting/applications/:id/resume`) can reach it.
+- **Screening** runs as a BullMQ job (`recruiting` queue, 3 attempts) right after an application is
+  registered, and on demand (`POST …/rescreen`). Two signals: cosine similarity between the résumé
+  and job-description embeddings, and a requirement-by-requirement assessment from the chat
+  fallback chain, returned as strict JSON (validated with zod; fences/chatter tolerated). The result
+  is stored on the application with `aiAssisted: true`, a 0–100 `fitScore`, strengths, gaps and
+  matched/missing requirements; `fit_score` is denormalised for ranking.
+- **Bias guardrail**: the prompt instructs the model to judge only against listed requirements and
+  to ignore protected characteristics, photos, names and employment gaps. Scores are advisory —
+  status changes (`PUT /recruiting/applications/:id/status`) are always a human action and record
+  who made them.
+- **Ranking**: `GET /recruiting/openings/:id/applications?minScore=&status=&sort=fitScore|newest`.
+- With `AI_DRIVER=fake` the screener is deterministic (keyword coverage of the requirements), which
+  the e2e suite relies on.
+
 ## Environment variables
 
 See [`.env.example`](.env.example) — every variable is documented there and validated at boot.
@@ -241,6 +309,6 @@ See [`.env.example`](.env.example) — every variable is documented there and va
 | 5 | Leave & attendance                      | ✅     |
 | 6 | Documents (Cloudinary)                  | ✅     |
 | 7 | Performance reviews                     | ✅     |
-| 8 | Payroll (stub)                          |        |
-| 9 | AI knowledge base + RAG assistant       |        |
-| 10| AI resume screening                     |        |
+| 8 | Payroll (stub)                          | ✅     |
+| 9 | AI knowledge base + RAG assistant       | ✅     |
+| 10| AI resume screening                     | ✅     |

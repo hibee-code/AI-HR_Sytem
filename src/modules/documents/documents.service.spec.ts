@@ -5,6 +5,7 @@ import {
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import type { AuthUser } from '../../common/auth/auth-user.interface';
@@ -102,6 +103,7 @@ describe('DocumentsService', () => {
         },
         { provide: STORAGE_SERVICE, useValue: storage },
         { provide: EmployeesService, useValue: employees },
+        { provide: EventEmitter2, useValue: { emit: jest.fn() } },
         {
           provide: ConfigService,
           useValue: {

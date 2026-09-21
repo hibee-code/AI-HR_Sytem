@@ -12,6 +12,8 @@ import { OnboardingProcessor } from './modules/onboarding/onboarding.processor';
 import { LeaveProcessor } from './modules/leave/leave.processor';
 import { AttendanceProcessor } from './modules/attendance/attendance.processor';
 import { PerformanceProcessor } from './modules/performance/performance.processor';
+import { AiProcessor } from './modules/ai/ai.processor';
+import { RecruitingProcessor } from './modules/recruiting/recruiting.processor';
 
 /**
  * Boots the whole application graph with the database and Redis replaced by
@@ -33,6 +35,7 @@ describe('AppModule wiring', () => {
       REDIS_HOST: 'stub',
       WORKERS_ENABLED: 'false',
       STORAGE_DRIVER: 'memory',
+      AI_DRIVER: 'fake',
       JWT_ACCESS_SECRET: 'a'.repeat(32),
       JWT_REFRESH_SECRET: 'b'.repeat(32),
     });
@@ -94,6 +97,14 @@ describe('AppModule wiring', () => {
       .overrideProvider(getQueueToken(QUEUES.PERFORMANCE))
       .useValue(fakeQueue())
       .overrideProvider(PerformanceProcessor)
+      .useValue({})
+      .overrideProvider(getQueueToken(QUEUES.AI))
+      .useValue(fakeQueue())
+      .overrideProvider(AiProcessor)
+      .useValue({})
+      .overrideProvider(getQueueToken(QUEUES.RECRUITING))
+      .useValue(fakeQueue())
+      .overrideProvider(RecruitingProcessor)
       .useValue({})
       .compile();
 

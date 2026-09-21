@@ -98,6 +98,12 @@ export interface TemplateData {
     cycleName: string;
     deadline: string;
   };
+  PAYSLIP_AVAILABLE: {
+    firstName: string;
+    periodStart: string;
+    periodEnd: string;
+    payDate: string;
+  };
   TEST: { firstName: string };
 }
 
@@ -396,6 +402,27 @@ export const TEMPLATES: { [K in TemplateName]: TemplateDef<TemplateData[K]> } =
       }),
       slack: (d) => ({
         text: `:speech_balloon: Feedback requested on *${d.aboutName}* (${d.cycleName}) — by ${d.deadline}.`,
+      }),
+    },
+
+    PAYSLIP_AVAILABLE: {
+      defaultChannels: [NotificationChannel.EMAIL],
+      // Deliberately carries no amounts: email is not a safe channel for pay data.
+      email: (d, ctx) => ({
+        subject: `Your payslip for ${d.periodStart} – ${d.periodEnd} is available`,
+        text: `Hi ${d.firstName},\n\nYour payslip for ${d.periodStart} – ${d.periodEnd} (pay date ${d.payDate}) is ready. Sign in to view or download it.\n\n${ctx.appUrl}`,
+        html: layout(
+          ctx,
+          'Payslip available',
+          p(`Hi ${esc(d.firstName)},`) +
+            p(
+              `Your payslip for <strong>${esc(d.periodStart)} – ${esc(d.periodEnd)}</strong> (pay date ${esc(d.payDate)}) is ready.`,
+            ) +
+            button(ctx.appUrl, 'View payslip'),
+        ),
+      }),
+      slack: (d) => ({
+        text: `:moneybag: Your payslip for ${d.periodStart} – ${d.periodEnd} is available in the HR portal.`,
       }),
     },
 

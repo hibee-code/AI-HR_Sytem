@@ -10,6 +10,7 @@ import { DatabaseModule } from './database/database.module';
 import { LoggerModule } from './infrastructure/logger/logger.module';
 import { RedisThrottlerStorage } from './infrastructure/redis/redis-throttler.storage';
 import { RedisModule } from './infrastructure/redis/redis.module';
+import { AiModule } from './modules/ai/ai.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { DocumentsModule } from './modules/documents/documents.module';
@@ -19,7 +20,9 @@ import { HealthModule } from './modules/health/health.module';
 import { LeaveModule } from './modules/leave/leave.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { OnboardingModule } from './modules/onboarding/onboarding.module';
+import { PayrollModule } from './modules/payroll/payroll.module';
 import { PerformanceModule } from './modules/performance/performance.module';
+import { RecruitingModule } from './modules/recruiting/recruiting.module';
 import { PermissionsGuard } from './modules/rbac/guards/permissions.guard';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { UsersModule } from './modules/users/users.module';
@@ -62,6 +65,9 @@ import { UsersModule } from './modules/users/users.module';
     AttendanceModule,
     DocumentsModule,
     PerformanceModule,
+    PayrollModule,
+    AiModule,
+    RecruitingModule,
   ],
   providers: [
     // Global guards run in this order: rate limit → authenticate → authorise.

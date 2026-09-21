@@ -76,6 +76,22 @@ export class CloudinaryStorageService implements StorageService {
     });
   }
 
+  async download(
+    key: string,
+    resourceType: StorageResourceType,
+  ): Promise<Buffer> {
+    const url = await this.signedDownloadUrl(key, {
+      resourceType,
+      expiresInSeconds: 120,
+    });
+    const res = await fetch(url);
+    if (!res.ok)
+      throw new Error(
+        `Cloudinary download failed: ${res.status} ${res.statusText}`,
+      );
+    return Buffer.from(await res.arrayBuffer());
+  }
+
   async delete(key: string, resourceType: StorageResourceType): Promise<void> {
     await cloudinary.uploader.destroy(key, {
       resource_type: resourceType,

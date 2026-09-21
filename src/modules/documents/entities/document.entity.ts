@@ -19,6 +19,8 @@ export enum DocumentCategory {
   PAYSLIP = 'PAYSLIP',
   /** Company policy; COMPANY-visible ones feed the AI knowledge base (stage 9). */
   POLICY = 'POLICY',
+  /** Candidate résumé (recruiting only; never owned by an employee). */
+  RESUME = 'RESUME',
   OTHER = 'OTHER',
 }
 

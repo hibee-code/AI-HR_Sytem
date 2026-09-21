@@ -8,6 +8,7 @@ import {
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash } from 'node:crypto';
 import { Brackets, Repository } from 'typeorm';
@@ -32,6 +33,11 @@ import {
   DocumentCategory,
   DocumentVisibility,
 } from './entities/document.entity';
+
+export const DOCUMENT_EVENTS = { CHANGED: 'document.changed' } as const;
+export interface DocumentChangedEvent {
+  documentId: string;
+}
 
 /** MIME types we accept for documents. Anything else is a 415. */
 export const ALLOWED_DOCUMENT_MIME = new Set([
@@ -73,6 +79,7 @@ export class DocumentsService {
     private readonly employeeRepo: Repository<Employee>,
     @Inject(STORAGE_SERVICE) private readonly storage: StorageService,
     private readonly employees: EmployeesService,
+    private readonly events: EventEmitter2,
     config: ConfigService<Env, true>,
   ) {
     this.maxBytes = config.get('MAX_UPLOAD_MB', { infer: true }) * 1024 * 1024;
@@ -139,6 +146,38 @@ export class DocumentsService {
       }),
     );
     await this.storeVersion(doc, file, actor.id, 1);
+    this.emitChanged(doc.id);
+    return this.findById(doc.id);
+  }
+
+  /**
+   * For other modules (payroll, etc.) that generate documents on the system's
+   * behalf. Skips actor permission checks; callers own the authorisation.
+   */
+  async createSystemDocument(input: {
+    ownerEmployeeId: string | null;
+    title: string;
+    description?: string;
+    category: DocumentCategory;
+    visibility: DocumentVisibility;
+    file: UploadedFile;
+    createdByUserId: string | null;
+  }): Promise<Document> {
+    this.validateFile(input.file, ALLOWED_DOCUMENT_MIME);
+    const doc = await this.documents.save(
+      this.documents.create({
+        ownerEmployeeId: input.ownerEmployeeId,
+        title: input.title,
+        description: input.description ?? null,
+        category: input.category,
+        visibility: input.visibility,
+        currentVersionId: null,
+        uploadedByUserId: input.createdByUserId,
+        kbIndexedAt: null,
+      }),
+    );
+    await this.storeVersion(doc, input.file, input.createdByUserId, 1);
+    this.emitChanged(doc.id);
     return this.findById(doc.id);
   }
 
@@ -153,6 +192,7 @@ export class DocumentsService {
     const next =
       (doc.versions.reduce((m, v) => Math.max(m, v.version), 0) || 0) + 1;
     await this.storeVersion(doc, file, actor.id, next);
+    this.emitChanged(id);
     return this.findById(id);
   }
 
@@ -183,6 +223,7 @@ export class DocumentsService {
     // Visibility/category changes may un-qualify a policy for the knowledge base.
     doc.kbIndexedAt = null;
     await this.documents.save(doc);
+    this.emitChanged(id);
     return this.findById(id);
   }
 
@@ -191,6 +232,7 @@ export class DocumentsService {
     const doc = await this.findById(id);
     this.assertCanEdit(doc, actor);
     await this.documents.softDelete(id);
+    this.emitChanged(id);
   }
 
   // ── Read ──────────────────────────────────────────────────────────────
@@ -277,6 +319,21 @@ export class DocumentsService {
   ): Promise<DownloadLinkResponse> {
     const doc = await this.findById(id);
     if (!(await this.canRead(doc, actor))) throw new ForbiddenException();
+    return this.linkFor(doc, version);
+  }
+
+  /** For modules with their own authorisation (recruiting résumés). Callers must check access first. */
+  async downloadLinkUnchecked(
+    id: string,
+    version?: number,
+  ): Promise<DownloadLinkResponse> {
+    return this.linkFor(await this.findById(id), version);
+  }
+
+  private async linkFor(
+    doc: Document,
+    version?: number,
+  ): Promise<DownloadLinkResponse> {
     const v = version
       ? doc.versions.find((x) => x.version === version)
       : doc.currentVersion;
@@ -314,10 +371,15 @@ export class DocumentsService {
 
   // ── Internals ─────────────────────────────────────────────────────────
 
+  /** Consumers (knowledge base) re-evaluate the document; payload is just the id. */
+  private emitChanged(documentId: string): void {
+    this.events.emit(DOCUMENT_EVENTS.CHANGED, { documentId });
+  }
+
   private async storeVersion(
     doc: Document,
     file: UploadedFile,
-    userId: string,
+    userId: string | null,
     version: number,
   ): Promise<DocumentVersion> {
     const stored = await this.storage.upload(file.buffer, {

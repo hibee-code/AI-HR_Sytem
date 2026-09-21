@@ -36,6 +36,15 @@ export class MemoryStorageService implements StorageService {
     return `memory://${key}?expires=${expires}&sig=test`;
   }
 
+  async download(
+    key: string,
+    _resourceType: StorageResourceType,
+  ): Promise<Buffer> {
+    const obj = this.objects.get(key);
+    if (!obj) throw new Error(`memory storage: object ${key} not found`);
+    return obj.buffer;
+  }
+
   async delete(key: string, _resourceType: StorageResourceType): Promise<void> {
     this.objects.delete(key);
   }
