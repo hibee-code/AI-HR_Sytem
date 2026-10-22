@@ -14,7 +14,7 @@ documents, resume screening), built on NestJS + PostgreSQL/pgvector + Redis/Bull
 | Notifications   | Slack bot + SMTP email (queue-driven)                    |
 | AI              | RAG: Hugging Face embeddings + Claude (Haiku 5.5) with HF/OpenAI fallback; SSE streaming |
 | Auth            | JWT access + rotating refresh tokens, permission-based RBAC |
-| Docs            | Swagger at `/api/docs` (non-production)                  |
+| Docs            | Swagger UI at `/api/docs` (JSON: `/api/docs-json`) — try every endpoint in the browser |
 | Logging         | pino (JSON in prod, pretty in dev), `X-Correlation-Id`   |
 | Tests           | Jest (unit) + Jest/supertest (e2e), GitHub Actions CI    |
 | Edge / TLS      | Caddy (automatic Let's Encrypt) in `docker-compose.prod.yml` |
@@ -32,6 +32,19 @@ npm run seed                    # roles, admin user, departments, leave policy
 npm run seed:demo               # optional: a demo company to click through (see below)
 npm run start:dev
 ```
+
+### Testing in the browser (Swagger)
+
+Open <http://localhost:3000/api/docs>. Run **auth → POST /auth/login** with *Try it out*; the
+returned access token is applied to every other request automatically (also after
+**/auth/mfa/verify** and **/auth/refresh**), and survives page reloads. Admin/HR accounts
+enrol in MFA first (**/auth/mfa/setup** → scan `otpauthUrl` → **/auth/mfa/enable**). Uploads
+show a file picker; lists document their `{ data, meta }` page shape; every operation shows the
+shared error schema. Request/response schemas come from the TypeScript types via the Nest
+Swagger compiler plugin (`nest-cli.json`), so they can't drift from the code.
+
+Swagger is on by default outside production. In production it's off unless `SWAGGER_ENABLED=true`
+**and** `SWAGGER_USER` / `SWAGGER_PASSWORD` are set (basic auth in front of the docs).
 
 ### Demo company & API collection
 
@@ -74,6 +87,10 @@ docker compose --profile full up --build
 | `npm run seed:catalogue`     | Sync roles/permissions only — safe for production (runs on every deploy) |
 | `npm run seed:admin`         | Production: create the first ADMIN from `SEED_ADMIN_*` (skips if it exists) |
 | `npm run postman`            | Regenerate the Postman collection from the running API     |
+| `npm run migrate:prod`       | Deploy step: migrations + permission catalogue under an advisory lock (safe with replicas) |
+| `npm run account:recover -- --email x` | Break-glass: unlock, remove MFA, sign out everywhere (`RECOVERY_NEW_PASSWORD` sets a password) |
+| `scripts/preflight.sh`       | Before deploying: `.env` complete, DNS → this server, ports 80/443 free |
+| `scripts/db-restore.sh <dump>` | Restore a backup into production (asks for confirmation)  |
 | `npm run lint` / `format`    | oxlint / prettier                                         |
 
 > Tests run Jest with `--experimental-vm-modules` because NestJS 12 ships as ESM and is
@@ -99,6 +116,10 @@ Conventions:
 - **Guards are global**; opt out per-route with `@Public()`.
 - **Every response error** has the same envelope (`statusCode`, `error`, `message`, `path`, `timestamp`, `correlationId`).
 - **Env is the only config source.** Add new variables to `src/config/env.schema.ts` *and* `.env.example`.
+- **No credentials in compose files.** All three (`docker-compose.yml`, `.test.yml`, `.prod.yml`)
+  read them from `.env` and refuse to start if a required one is missing. Redis gets its password
+  through the environment via `docker/redis/redis.sh` (never on a command line). The e2e stack
+  uses `TEST_*` from `.env`, or random credentials per run when they're empty (CI).
 
 ## Authentication & authorisation
 
@@ -128,6 +149,15 @@ Conventions:
 - **Lockout.** `LOGIN_MAX_ATTEMPTS` failed passwords or MFA codes lock the account for
   `LOGIN_LOCKOUT_MINUTES` (`423 ACCOUNT_LOCKED`, checked before the password). The counter is
   updated atomically in SQL and resets on success; `POST /users/:id/unlock` clears it.
+- **Lockout is silent to callers**: a locked account gets the same `401 Invalid email or password`
+  as a wrong password or unknown email (no enumeration); the owner gets an `ACCOUNT_LOCKED` email
+  with a reset link instead. **Password reset needs MFA** when the account has it: send `code`
+  (authenticator or recovery) with the token — checked before the link is used up.
+  `MFA_TOTP_WINDOW` widens accepted clock drift (default ±30 s). **Recovery codes** can be
+  regenerated with a live code (`POST /auth/mfa/recovery-codes`); `/auth/me` shows
+  `mfaRecoveryCodesRemaining`. **Break-glass**: if nobody can sign in (sole admin lost phone and
+  codes), run `npm run account:recover -- --email …` on the server — shell access is the
+  authentication, and it's audited as `user.break_glass`.
 - **Audit trail** (`GET /audit-logs`, ADMIN only, filter by actor / action / resource / dates):
   logins, failures, lockouts, MFA changes, invites, role and status changes, employee
   create/update/transfer/terminate, salary structures (create *and* view), payroll run
@@ -220,6 +250,12 @@ Bootstrap admin comes from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (`npm run 
   report (`GET /attendance/report?month=YYYY-MM`) with days present, minutes, approved leave days.
   Sessions left open > 16 h are auto-closed at 16 h by an hourly job and flagged.
 
+Cross-year requests (e.g. 29 Dec → 5 Jan) are allowed: working days are charged to each year's
+balance (`allocations`), and approval / cancellation update both. `POST
+/leave/holidays/nigeria/:year` adds the fixed and Easter-based Nigerian public holidays; Eid-el-Fitr,
+Eid-el-Kabir, Eid-el-Maulud and weekend substitutes are declared yearly by the FG — add them with
+`POST /leave/holidays` once announced.
+
 ## Documents
 
 - **Storage** sits behind a port (`src/infrastructure/storage/storage.interface.ts`). `STORAGE_DRIVER=cloudinary`
@@ -279,12 +315,24 @@ Bootstrap admin comes from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (`npm run 
   `src/modules/payroll/nigeria-payroll.calculator.ts`): contractual lines, then employee pension
   8% of basic + `HOUSING` + `TRANSPORT`, NHF 2.5% of basic, and PAYE on the Nigeria Tax Act 2025
   bands (first ₦800k free, then 15/18/21/23/25%), annualising the period's taxable pay
-  (gross − pension − NHF). A structure's own `PENSION`, `NHF` or `PAYE`/`TAX` line wins over the
-  computed one, so nothing is deducted twice. Joiners and leavers are included in every run that
-  overlaps their employment and pro-rated by calendar days. All rates live in
-  `NIGERIA_STATUTORY` — **have finance confirm them before each tax year**. Not modelled yet:
-  rent relief, NHIS and life-assurance reliefs, cumulative (year-to-date) PAYE, employer costs
-  (10% pension, NSITF) on reports. `simple` = contractual lines only.
+  (gross − pension − NHF − `NHIS` / `LIFE_ASSURANCE` / `MORTGAGE_INTEREST` deduction lines), with
+  rent relief of 20% of the structure's declared `annualRent`, capped at ₦500k.
+  **PAYE is cumulative**: each run taxes the projected year (year-to-date taxable pay from approved
+  runs + this period × periods left), takes the share earned so far and subtracts PAYE already
+  deducted — steady pay gives exactly annual tax ÷ 12, pay changes and mid-year joiners
+  self-correct, nothing is refunded via payroll. Without history (first run / mid-year go-live)
+  earlier months are assumed paid at the current rate. A structure's own `PENSION`, `NHF` or
+  `PAYE`/`TAX` line wins over the computed one, so nothing is deducted twice. Joiners and leavers
+  are included in every run that overlaps their employment and pro-rated by calendar days. All
+  rates live in `NIGERIA_STATUTORY` — **have finance confirm them before each tax year**.
+  **Employer costs** (10% employer pension, 1% NSITF) are recorded per payslip (`employerCosts`) and
+  per run (`totals.employerCost`), never deducted; ITF is an annual levy and isn't computed.
+  `simple` = contractual lines only.
+- **Mid-period changes**: every structure in force during the period is paid for its own days
+  (e.g. a raise on the 16th) and the lines merged. **Other currencies** are converted at the run's
+  `fxRates` (`{ "USD": 1550 }`, set on create or `PUT /payroll/runs/:id/fx-rates` until approval);
+  without a rate the employee is skipped with a reason. Anyone not employed during the period
+  (e.g. termination recorded before the hire date) is skipped with a reason, not given a ₦0 slip.
 
 ## AI knowledge base & assistant
 
@@ -308,6 +356,18 @@ Bootstrap admin comes from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (`npm run 
   résumé screening — is logged to `ai_usage` with tokens and an estimated USD cost from list
   prices (`src/infrastructure/ai/pricing.ts`); `GET /ai/usage` (`ai:read_usage`) reports per
   day / feature / model.
+- **Untrusted text**: résumés and policy excerpts are fenced in tags the content can't close, the
+  prompts say fenced text is data, and text that looks like an injection is flagged
+  (`screening.injectionSuspected`, a warning when indexing a policy). With `AI_REDACT_PII` (default
+  on), e-mails, phone numbers, links and the candidate's name are removed from résumés — and contact
+  details from assistant questions — before anything leaves for an AI provider.
+- **Scanned PDFs** (no text layer) are transcribed by Claude when `ANTHROPIC_API_KEY` is set
+  (résumés and knowledge-base policies); otherwise they fail / are skipped with a clear reason.
+- **Closed tab**: if the client disconnects mid-stream, generation is cancelled and the half answer
+  isn't saved; tokens already produced are logged as an `aborted` call (and count toward the cap).
+- **Per-role caps**: `AI_DAILY_LIMIT_OVERRIDES="HR_MANAGER=200,ADMIN=0"` (most generous role
+  wins, 0 = unlimited). Cost estimates price cache reads (0.1×), cache writes (1.25×) and
+  long-context rates.
 - **Answering** (`POST /ai/assistant/chat`): the last 8 turns of the conversation plus the retrieved
   excerpts go to the chat model with a grounding system prompt; answers cite excerpts as `[n]`, and
   only cited excerpts are returned as `citations`. Conversations are persisted per user
@@ -351,6 +411,22 @@ Bootstrap admin comes from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (`npm run 
 - With `AI_DRIVER=fake` the screener is deterministic (keyword coverage of the requirements), which
   the e2e suite relies on.
 
+## Privacy & retention (NDPA)
+
+- **Access**: `GET /privacy/me/export` (anyone, own data) and `GET /privacy/employees/:id/export`,
+  `GET /privacy/candidates/:id/export` (`privacy:manage`, HR + Admin) return every section the
+  system holds — account, sessions, HR record, leave, attendance, documents (metadata), reviews,
+  payroll, notifications, AI conversations, audit entries — with secrets never included.
+- **Erasure**: `DELETE /privacy/candidates/:id` removes an applicant's applications, résumé files
+  and record permanently. Employees' records are kept for statutory periods (payroll, tax, pension),
+  so there's no employee erasure endpoint.
+- **Retention**: a daily job (`RETENTION_CRON`) deletes AI conversations, AI usage, notification
+  logs, audit entries and closed applicants older than `RETENTION_*_DAYS` (0 = forever; run now
+  with `POST /privacy/retention/run`). Audit rows stay immutable except through that job's
+  guarded path, which the database limits to rows older than 365 days.
+- **Still on you**: data-processing agreements with Hugging Face and Anthropic, and a privacy notice
+  telling staff and applicants what's processed by AI.
+
 ## Production deploy (single VPS)
 
 ```bash
@@ -366,7 +442,22 @@ Postgres and Redis (password-protected, AOF on) live on the internal network. Ea
 pending migrations and syncs the permission catalogue before serving; a failed migration stops the
 deploy. The first ADMIN must enrol in MFA at first login. Production boot refuses dev-only
 settings (`STORAGE_DRIVER=memory`, `AI_DRIVER=fake`, `CORS_ORIGINS=*`, `THROTTLE_ENABLED=false`).
-Still on you: database backups (`pg_dump` off-box, tested restores), monitoring, log shipping.
+Run `scripts/preflight.sh` first: it checks `.env`, that `DOMAIN` resolves to this server and that
+ports 80/443 are free — Caddy needs all three to get its certificate.
+
+- **Backups**: the `backup` service writes a verified `pg_dump` to `./backups` daily at
+  `BACKUP_HOUR_UTC`, keeps `BACKUP_KEEP_DAYS`, and runs `BACKUP_UPLOAD_CMD` (e.g. `rclone copy "$1"
+  remote:`) to get a copy off the server. On demand: `docker compose -f docker-compose.prod.yml exec
+  backup sh /usr/local/bin/backup.sh --once`. Restore: `scripts/db-restore.sh backups/<file>.dump`.
+  Test a restore regularly.
+- **Replicas**: migrations run under a Postgres advisory lock, so several app containers can start
+  together.
+- **Rate limits** are per user for authenticated requests (offices behind one NAT don't share a
+  limit) and per IP otherwise.
+- **Redis** is capped at `REDIS_MAXMEMORY` (default 256mb), job history is pruned, and
+  `/health/ready` reports Redis down above 90% of the cap — before `noeviction` would start
+  rejecting writes.
+- Still on you: uptime monitoring on `/health/ready`, error tracking, log shipping.
 
 ## Environment variables
 

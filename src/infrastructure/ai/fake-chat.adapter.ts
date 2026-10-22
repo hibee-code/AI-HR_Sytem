@@ -21,7 +21,7 @@ export class FakeChatAdapter implements ChatModel {
     const lastUser =
       [...req.messages].reverse().find((m) => m.role === 'user')?.content ?? '';
     if (req.system.includes('"fitScore"')) return this.screening(lastUser);
-    const firstSource = /\[(\d+)\]/.exec(req.system)?.[1] ?? '1';
+    const firstSource = /<excerpt ref="(\d+)"/.exec(req.system)?.[1] ?? '1';
     return {
       text: `Based on the company policy [${firstSource}], here is what applies to "${lastUser}".`,
       provider: this.provider,
@@ -45,7 +45,7 @@ export class FakeChatAdapter implements ChatModel {
     const reqBlock =
       /REQUIREMENTS:\n([\s\S]*?)\n\nRÉSUMÉ:/.exec(prompt)?.[1] ?? '';
     const resume = (
-      /RÉSUMÉ:\n([\s\S]*)$/.exec(prompt)?.[1] ?? ''
+      /<resume>\n([\s\S]*)\n<\/resume>/.exec(prompt)?.[1] ?? ''
     ).toLowerCase();
     const requirements = reqBlock
       .split('\n')

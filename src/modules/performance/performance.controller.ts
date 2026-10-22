@@ -38,6 +38,10 @@ import {
 import { GoalsService } from './goals.service';
 import { PerformanceProcessor } from './performance.processor';
 import { ReviewsService } from './reviews.service';
+import { Goal } from './entities/goal.entity';
+import { Review } from './entities/review.entity';
+import { ReviewCycle } from './entities/review-cycle.entity';
+import { ApiPaginatedResponse } from '../../common/decorators/api-paginated-response.decorator';
 
 @ApiTags('performance')
 @ApiBearerAuth('access-token')
@@ -55,6 +59,7 @@ export class PerformanceController {
 
   @Get('cycles')
   @RequirePermissions(PERMISSIONS.REVIEW_READ_SELF)
+  @ApiPaginatedResponse(ReviewCycle)
   listCycles(@Query() query: ListCyclesQueryDto) {
     return this.cycles.list(query);
   }
@@ -118,6 +123,7 @@ export class PerformanceController {
 
   @Get('reviews')
   @RequirePermissions(PERMISSIONS.REVIEW_MANAGE_CYCLES)
+  @ApiPaginatedResponse(Review)
   listReviews(@Query() query: ListReviewsQueryDto) {
     return this.reviews.list(query);
   }
@@ -125,6 +131,7 @@ export class PerformanceController {
   @Get('reviews/me')
   @RequirePermissions(PERMISSIONS.REVIEW_READ_SELF)
   @ApiOperation({ summary: 'My reviews across cycles' })
+  @ApiPaginatedResponse(Review)
   async myReviews(
     @Query() query: ListReviewsQueryDto,
     @CurrentUser() actor: AuthUser,
@@ -136,6 +143,7 @@ export class PerformanceController {
   @Get('reviews/team')
   @RequirePermissions(PERMISSIONS.REVIEW_WRITE_TEAM)
   @ApiOperation({ summary: 'Reviews of my direct reports' })
+  @ApiPaginatedResponse(Review)
   async teamReviews(
     @Query() query: ListReviewsQueryDto,
     @CurrentUser() actor: AuthUser,
@@ -258,6 +266,7 @@ export class PerformanceController {
   @Get('goals')
   @RequirePermissions(PERMISSIONS.REVIEW_READ_SELF)
   @ApiOperation({ summary: 'Goals I may see (own, reports; HR: all)' })
+  @ApiPaginatedResponse(Goal)
   listGoals(@Query() query: ListGoalsQueryDto, @CurrentUser() actor: AuthUser) {
     return this.goals.list(query, actor);
   }

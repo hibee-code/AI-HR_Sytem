@@ -19,6 +19,10 @@ import { LeaveBalance, round1 } from './entities/leave-balance.entity';
 import { HalfDay } from './entities/leave-request.entity';
 import { LeaveType } from './entities/leave-type.entity';
 import { PublicHoliday } from './entities/public-holiday.entity';
+import {
+  DECLARED_HOLIDAYS_NOTE,
+  nigerianPublicHolidays,
+} from './nigerian-holidays';
 
 /**
  * Policy data (types, holidays), day arithmetic, and balance provisioning.
@@ -106,6 +110,22 @@ export class LeavePolicyService {
       throw new ConflictException(`A holiday already exists on ${dto.date}`);
     }
     return this.holidays.save(this.holidays.create(dto));
+  }
+
+  /** Adds the computable Nigerian holidays for a year; existing dates are left alone. */
+  async addNigerianHolidays(
+    year: number,
+  ): Promise<{ added: PublicHoliday[]; skipped: string[]; note: string }> {
+    const added: PublicHoliday[] = [];
+    const skipped: string[] = [];
+    for (const h of nigerianPublicHolidays(year)) {
+      if (await this.holidays.exists({ where: { date: h.date } })) {
+        skipped.push(h.date);
+        continue;
+      }
+      added.push(await this.holidays.save(this.holidays.create(h)));
+    }
+    return { added, skipped, note: DECLARED_HOLIDAYS_NOTE };
   }
 
   async removeHoliday(id: string): Promise<void> {

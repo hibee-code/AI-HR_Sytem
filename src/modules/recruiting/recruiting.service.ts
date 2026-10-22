@@ -19,7 +19,9 @@ import { STORAGE_SERVICE } from '../../infrastructure/storage/storage.interface'
 import type { StorageService } from '../../infrastructure/storage/storage.interface';
 import { AiUsageService } from '../ai/ai-usage.service';
 import { AiFeature } from '../ai/entities/ai-usage.entity';
-import { extractText } from '../ai/text-extraction';
+import { extractTextOrTranscribe } from '../ai/text-extraction';
+import { DOCUMENT_READER } from '../../infrastructure/ai/document-reader.interface';
+import type { DocumentReader } from '../../infrastructure/ai/document-reader.interface';
 import { DocumentsService } from '../documents/documents.service';
 import type {
   DownloadLinkResponse,
@@ -58,6 +60,7 @@ export const RESUME_MIME = new Set([
 @Injectable()
 export class RecruitingService {
   private readonly maxTokens: number;
+  private readonly redactPii: boolean;
 
   constructor(
     @InjectRepository(JobOpening)
@@ -76,10 +79,12 @@ export class RecruitingService {
     @Inject(STORAGE_SERVICE) private readonly storage: StorageService,
     private readonly documents: DocumentsService,
     private readonly aiUsage: AiUsageService,
+    @Inject(DOCUMENT_READER) private readonly reader: DocumentReader,
     private readonly logger: Logger,
     config: ConfigService<Env, true>,
   ) {
     this.maxTokens = config.get('AI_MAX_OUTPUT_TOKENS', { infer: true });
+    this.redactPii = config.get('AI_REDACT_PII', { infer: true });
   }
 
   // ── Openings ──────────────────────────────────────────────────────────
@@ -310,7 +315,11 @@ export class RecruitingService {
   async screen(applicationId: string): Promise<Application> {
     const app = await this.applications.findOne({
       where: { id: applicationId },
-      relations: { opening: true, resumeDocument: { currentVersion: true } },
+      relations: {
+        opening: true,
+        candidate: true,
+        resumeDocument: { currentVersion: true },
+      },
     });
     if (!app) throw new NotFoundException('Application not found');
     await this.applications.update(applicationId, {
@@ -325,9 +334,13 @@ export class RecruitingService {
         version.storageKey,
         version.resourceType,
       );
-      const resumeText = (await extractText(bytes, version.mimeType)).trim();
+      const resumeText = await extractTextOrTranscribe(
+        bytes,
+        version.mimeType,
+        this.reader,
+      );
       if (resumeText.length < 50)
-        throw new Error('Résumé text could not be extracted (scanned image?)');
+        throw new Error('Résumé has too little text to screen');
 
       const result = await screenResume(
         {
@@ -335,6 +348,9 @@ export class RecruitingService {
           description: app.opening.description,
           requirements: app.opening.requirements,
           resumeText,
+          redactNames: this.redactPii
+            ? [app.candidate.firstName, app.candidate.lastName]
+            : null,
         },
         this.embeddings,
         this.chat,

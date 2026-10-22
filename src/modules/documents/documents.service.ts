@@ -228,6 +228,24 @@ export class DocumentsService {
   }
 
   /** Soft delete; versions and storage objects are retained. */
+  /**
+   * Erasure (privacy/retention): deletes the stored files and the rows for
+   * good, unlike remove(), which is a recoverable soft delete.
+   */
+  async purge(id: string): Promise<void> {
+    const doc = await this.documents.findOne({
+      where: { id },
+      relations: { versions: true },
+      withDeleted: true,
+    });
+    if (!doc) return;
+    for (const v of doc.versions ?? []) {
+      await this.storage.delete(v.storageKey, v.resourceType);
+    }
+    await this.documents.delete(id); // versions + knowledge chunks cascade
+    this.emitChanged(id);
+  }
+
   async remove(id: string, actor: AuthUser): Promise<void> {
     const doc = await this.findById(id);
     this.assertCanEdit(doc, actor);

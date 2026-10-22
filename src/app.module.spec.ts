@@ -15,6 +15,7 @@ import { AttendanceProcessor } from './modules/attendance/attendance.processor';
 import { PerformanceProcessor } from './modules/performance/performance.processor';
 import { AiProcessor } from './modules/ai/ai.processor';
 import { RecruitingProcessor } from './modules/recruiting/recruiting.processor';
+import { RetentionProcessor } from './modules/privacy/retention.processor';
 
 /**
  * Boots the whole application graph with the database and Redis replaced by
@@ -91,6 +92,10 @@ describe('AppModule wiring', () => {
       .overrideProvider(getQueueToken(QUEUES.RECRUITING))
       .useValue(fakeQueue())
       .overrideProvider(RecruitingProcessor)
+      .useValue({})
+      .overrideProvider(getQueueToken(QUEUES.PRIVACY))
+      .useValue(fakeQueue())
+      .overrideProvider(RetentionProcessor)
       .useValue({})
       .compile();
 

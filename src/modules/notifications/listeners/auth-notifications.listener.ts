@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { OnEvent } from '@nestjs/event-emitter';
 import type { Env } from '../../../config/env.schema';
 import {
+  AccountLockedEvent,
   AUTH_EVENTS,
   PasswordChangedEvent,
   PasswordResetRequestedEvent,
@@ -53,6 +54,21 @@ export class AuthNotificationsListener {
         expiresAt: e.expiresAt.toISOString(),
       },
       dedupeKey: `auth.reset:${e.userId}:${e.expiresAt.getTime()}`,
+    });
+  }
+
+  @OnEvent(AUTH_EVENTS.ACCOUNT_LOCKED, { async: true, promisify: true })
+  async onLocked(e: AccountLockedEvent): Promise<void> {
+    await this.notifications.notify({
+      template: 'ACCOUNT_LOCKED',
+      // Security notice: bypasses preferences, like PASSWORD_CHANGED.
+      to: { email: e.email },
+      data: {
+        firstName: e.firstName,
+        lockedUntil: e.lockedUntil.toISOString(),
+        resetUrl: `${this.appUrl}/forgot-password`,
+      },
+      dedupeKey: `auth.locked:${e.userId}:${e.lockedUntil.getTime()}`,
     });
   }
 

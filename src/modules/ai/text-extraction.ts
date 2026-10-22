@@ -1,8 +1,33 @@
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 import * as mammoth from 'mammoth';
 import { PDFParse } from 'pdf-parse';
+import type { DocumentReader } from '../../infrastructure/ai/document-reader.interface';
 
 /** Plain text from the formats the documents module accepts for ingestion. */
+/** Text shorter than this from a PDF means "no text layer" (a scan). */
+const MIN_TEXT_CHARS = 50;
+
+export class ScannedDocumentError extends Error {}
+
+/**
+ * extractText, plus a vision fallback for scanned PDFs (no text layer):
+ * transcribed by the DocumentReader when one is configured.
+ */
+export async function extractTextOrTranscribe(
+  buffer: Buffer,
+  mimeType: string,
+  reader: DocumentReader,
+): Promise<string> {
+  const text = (await extractText(buffer, mimeType)).trim();
+  if (mimeType !== 'application/pdf' || text.length >= MIN_TEXT_CHARS)
+    return text;
+  if (!reader.available)
+    throw new ScannedDocumentError(
+      'Scanned PDF with no text layer; reading scans needs ANTHROPIC_API_KEY',
+    );
+  return (await reader.transcribePdf(buffer)).trim();
+}
+
 export async function extractText(
   buffer: Buffer,
   mimeType: string,

@@ -71,19 +71,22 @@ export class LeaveRequestsService {
     if (halfDay !== HalfDay.NONE && !type.allowHalfDay) {
       throw new BadRequestException(`${type.name} does not allow half days`);
     }
-    if (dto.startDate.slice(0, 4) !== dto.endDate.slice(0, 4)) {
+    const startYear = Number(dto.startDate.slice(0, 4));
+    if (Number(dto.endDate.slice(0, 4)) > startYear + 1) {
       throw new BadRequestException(
-        'A request must fall within one calendar year; split it at 31 December',
+        'A request can span at most two calendar years',
       );
     }
     if (dto.startDate < emp.hireDate)
       throw new BadRequestException('Leave cannot start before the hire date');
 
-    const days = await this.policy.countWorkingDays(
+    // Days are charged per calendar year: a request over 31 Dec uses both balances.
+    const allocations = await this.allocate(
       dto.startDate,
       dto.endDate,
       halfDay,
     );
+    const days = allocations.reduce((sum, a) => sum + a.days, 0);
     if (days === 0)
       throw new BadRequestException(
         'The selected dates contain no working days',
@@ -102,19 +105,30 @@ export class LeaveRequestsService {
         `Overlaps an existing ${overlap.status.toLowerCase()} request`,
       );
 
-    const year = Number(dto.startDate.slice(0, 4));
     if (type.requiresBalance) {
-      const balance = await this.policy.ensureBalance(
-        employeeId,
-        type.id,
-        year,
-      );
-      if (balance.available(dto.startDate) < days) {
-        throw new BadRequestException(
-          `Insufficient ${type.name} balance: ${balance.available(dto.startDate)} day(s) available, ${days} requested`,
+      for (const a of allocations) {
+        const balance = await this.policy.ensureBalance(
+          employeeId,
+          type.id,
+          a.year,
         );
+        const asOf = a.year === startYear ? dto.startDate : `${a.year}-01-01`;
+        if (balance.available(asOf) < a.days) {
+          throw new BadRequestException(
+            `Insufficient ${type.name} balance for ${a.year}: ${balance.available(asOf)} day(s) available, ${a.days} requested`,
+          );
+        }
       }
-      await this.policy.applyToBalance(balance, { pending: days });
+      await this.chargeBalances(
+        {
+          employeeId,
+          leaveTypeId: type.id,
+          allocations,
+          year: startYear,
+          days,
+        },
+        (d) => ({ pending: d }),
+      );
     }
 
     const request = await this.requests.save(
@@ -125,7 +139,8 @@ export class LeaveRequestsService {
         endDate: dto.endDate,
         halfDay,
         days,
-        year,
+        year: startYear,
+        allocations,
         reason: dto.reason ?? null,
         status: LeaveRequestStatus.PENDING,
         approverUserId: emp.manager?.userId ?? null,
@@ -150,15 +165,7 @@ export class LeaveRequestsService {
   ): Promise<LeaveRequest> {
     const r = await this.loadForDecision(id, actor);
     if (r.leaveType.requiresBalance) {
-      const balance = await this.policy.ensureBalance(
-        r.employeeId,
-        r.leaveTypeId,
-        r.year,
-      );
-      await this.policy.applyToBalance(balance, {
-        pending: -r.days,
-        used: r.days,
-      });
+      await this.chargeBalances(r, (d) => ({ pending: -d, used: d }));
     }
     await this.requests.update(id, {
       status: LeaveRequestStatus.APPROVED,
@@ -395,17 +402,56 @@ export class LeaveRequestsService {
 
   private async releaseReservation(r: LeaveRequest): Promise<void> {
     if (!r.leaveType.requiresBalance) return;
-    const balance = await this.policy.ensureBalance(
-      r.employeeId,
-      r.leaveTypeId,
-      r.year,
+    const pending = r.status === LeaveRequestStatus.PENDING;
+    await this.chargeBalances(r, (d) =>
+      pending ? { pending: -d } : { used: -d },
     );
-    await this.policy.applyToBalance(
-      balance,
-      r.status === LeaveRequestStatus.PENDING
-        ? { pending: -r.days }
-        : { used: -r.days },
-    );
+  }
+
+  /** Working days per calendar year between two dates (split at 31 Dec). */
+  private async allocate(
+    start: string,
+    end: string,
+    halfDay: HalfDay,
+  ): Promise<{ year: number; days: number }[]> {
+    const y = Number(start.slice(0, 4));
+    if (Number(end.slice(0, 4)) === y)
+      return [
+        {
+          year: y,
+          days: await this.policy.countWorkingDays(start, end, halfDay),
+        },
+      ];
+    const parts = [
+      { year: y, start, end: `${y}-12-31` },
+      { year: y + 1, start: `${y + 1}-01-01`, end },
+    ];
+    const out: { year: number; days: number }[] = [];
+    for (const p of parts) {
+      const days = await this.policy.countWorkingDays(p.start, p.end, halfDay);
+      if (days > 0) out.push({ year: p.year, days });
+    }
+    return out;
+  }
+
+  /** Applies one balance change per allocated year (one place for every path). */
+  private async chargeBalances(
+    r: Pick<LeaveRequest, 'employeeId' | 'leaveTypeId' | 'year' | 'days'> & {
+      allocations: LeaveRequest['allocations'];
+    },
+    change: (days: number) => { pending?: number; used?: number },
+  ): Promise<void> {
+    const allocations = r.allocations?.length
+      ? r.allocations
+      : [{ year: r.year, days: r.days }];
+    for (const a of allocations) {
+      const balance = await this.policy.ensureBalance(
+        r.employeeId,
+        r.leaveTypeId,
+        a.year,
+      );
+      await this.policy.applyToBalance(balance, change(a.days));
+    }
   }
 
   private async applyLongLeaveStatus(

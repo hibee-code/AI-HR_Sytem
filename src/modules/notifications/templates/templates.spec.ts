@@ -22,6 +22,11 @@ const SAMPLE: {
     expiresAt: '2026-10-01T00:00:00Z',
   },
   PASSWORD_CHANGED: { firstName: 'Jane' },
+  ACCOUNT_LOCKED: {
+    firstName: 'Jane',
+    lockedUntil: '2026-10-01T10:15:00Z',
+    resetUrl: 'https://hr.example.com/forgot-password',
+  },
   EMPLOYEE_WELCOME: {
     firstName: 'Jane',
     startDate: '2026-10-01',

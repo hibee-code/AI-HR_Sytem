@@ -162,13 +162,26 @@ describe('Security: MFA, lockout, audit trail (e2e)', () => {
     const email = 'lock@test.local';
     let userId: string;
 
-    it('locks after 5 bad passwords — even the right one gets 423 — until an admin unlocks', async () => {
+    it('locks after 5 bad passwords: the right one then gets the same 401 as a wrong one, and the owner is emailed', async () => {
       ({ id: userId } = await newUser(email));
       for (let i = 0; i < 5; i++)
         await login(email, 'wrong-password-1').expect(401);
 
-      const locked = await login(email).expect(423);
-      expect(locked.body.error).toBe('ACCOUNT_LOCKED');
+      // Indistinguishable from bad credentials or an unknown email (no enumeration).
+      const locked = await login(email).expect(401);
+      const unknown = await login('nobody@test.local').expect(401);
+      expect(locked.body.message).toBe(unknown.body.message);
+
+      const deadline = Date.now() + 10_000;
+      let mail: { status: string }[] = [];
+      while (Date.now() < deadline && mail.length === 0) {
+        mail = await ds.query(
+          `SELECT status FROM notification_log WHERE template = 'ACCOUNT_LOCKED' AND recipient_address = $1`,
+          [email],
+        );
+        if (!mail.length) await new Promise((r) => setTimeout(r, 200));
+      }
+      expect(mail.length).toBe(1);
 
       await http()
         .post(`${BASE}/users/${userId}/unlock`)
@@ -184,6 +197,45 @@ describe('Security: MFA, lockout, audit trail (e2e)', () => {
       for (let i = 0; i < 4; i++)
         await login(email, 'wrong-password-1').expect(401);
       await login(email).expect(200);
+    });
+  });
+
+  describe('password reset with MFA', () => {
+    it('needs an authenticator code as well as the emailed link; a wrong code keeps the link usable', async () => {
+      const email = 'reset-mfa@test.local';
+      const { token } = await newUser(email);
+      const { secret } = (
+        await http().post(`${BASE}/auth/mfa/setup`).set(auth(token)).expect(201)
+      ).body;
+      await http()
+        .post(`${BASE}/auth/mfa/enable`)
+        .set(auth(token))
+        .send({ code: totpCode(secret, totpStep()) })
+        .expect(200);
+
+      const requested = new Promise<{ resetToken: string }>((resolve) =>
+        app
+          .get(EventEmitter2)
+          .once(AUTH_EVENTS.PASSWORD_RESET_REQUESTED, resolve),
+      );
+      await http()
+        .post(`${BASE}/auth/forgot-password`)
+        .send({ email })
+        .expect(202);
+      const { resetToken } = await requested;
+      const reset = (code?: string) =>
+        http()
+          .post(`${BASE}/auth/reset-password`)
+          .send({
+            token: resetToken,
+            password: 'Brand-New-Passw0rd',
+            ...(code && { code }),
+          });
+
+      expect((await reset().expect(401)).body.error).toBe('MFA_REQUIRED');
+      await reset('000000').expect(401);
+      await reset(totpCode(secret, totpStep() + 1)).expect(204); // link still valid
+      await reset(totpCode(secret, totpStep() + 1)).expect(401); // now burned
     });
   });
 

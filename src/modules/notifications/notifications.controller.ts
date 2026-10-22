@@ -19,6 +19,8 @@ import {
   UpdatePreferencesDto,
 } from './dto/notifications.dto';
 import { NotificationsService } from './notifications.service';
+import { NotificationLog } from './entities/notification-log.entity';
+import { ApiPaginatedResponse } from '../../common/decorators/api-paginated-response.decorator';
 
 @ApiTags('notifications')
 @ApiBearerAuth('access-token')
@@ -61,6 +63,7 @@ export class NotificationsController {
   @Get('log')
   @RequirePermissions(PERMISSIONS.NOTIFICATION_READ_LOG)
   @ApiOperation({ summary: 'Delivery log (paginated, filterable)' })
+  @ApiPaginatedResponse(NotificationLog)
   listLog(@Query() query: ListNotificationLogDto) {
     return this.notifications.listLog(query);
   }

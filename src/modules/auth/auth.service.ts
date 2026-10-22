@@ -1,7 +1,5 @@
 import {
   BadRequestException,
-  HttpException,
-  HttpStatus,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -15,6 +13,7 @@ import { RbacService } from '../rbac/rbac.service';
 import { User, UserStatus } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
 import {
+  AccountLockedEvent,
   AUTH_EVENTS,
   PasswordChangedEvent,
   PasswordResetRequestedEvent,
@@ -84,8 +83,16 @@ export class AuthService {
       });
       throw new UnauthorizedException('Invalid email or password');
     }
-    this.assertNotLocked(user);
-    if (!(await argon2.verify(user.passwordHash, password))) {
+    const passwordOk = await argon2.verify(user.passwordHash, password);
+    if (this.isLocked(user)) {
+      // Same answer (and cost) as a wrong password: a lock must not reveal
+      // that the account exists. The owner was emailed when it locked.
+      await this.auditAuth('auth.login_failed', user.id, meta, {
+        reason: 'locked',
+      });
+      throw new UnauthorizedException('Invalid email or password');
+    }
+    if (!passwordOk) {
       await this.registerFailure(user, meta, 'password');
       throw new UnauthorizedException('Invalid email or password');
     }
@@ -110,7 +117,8 @@ export class AuthService {
     const user = await this.users.findById(
       await this.tokens.verifyMfaChallenge(mfaToken),
     );
-    this.assertNotLocked(user);
+    if (this.isLocked(user))
+      throw new UnauthorizedException('Invalid authentication code');
     this.assertCanLogin(user);
     if (!(await this.mfa.verify(user, code))) {
       await this.registerFailure(user, meta, 'mfa');
@@ -211,13 +219,35 @@ export class AuthService {
     );
   }
 
-  async resetPassword(rawToken: string, newPassword: string): Promise<void> {
-    const userId = await this.tokens.consumeOneTime(
-      rawToken,
-      OneTimeTokenType.PASSWORD_RESET,
+  /**
+   * With MFA on, the emailed link alone isn't enough: an authenticator or
+   * recovery code is required too. Checked before the link is burned, so a
+   * mistyped code doesn't cost the user their reset email.
+   */
+  async resetPassword(
+    rawToken: string,
+    newPassword: string,
+    code?: string,
+    meta: ClientMeta = {},
+  ): Promise<void> {
+    const type = OneTimeTokenType.PASSWORD_RESET;
+    const user = await this.users.findById(
+      await this.tokens.peekOneTime(rawToken, type),
     );
-    const user = await this.users.findById(userId);
     this.assertCanLogin(user);
+    if (user.mfaEnabled) {
+      if (!code)
+        throw new UnauthorizedException({
+          error: 'MFA_REQUIRED',
+          message:
+            'This account uses two-factor authentication: send a code from your authenticator app (or a recovery code) as `code`.',
+        });
+      if (!(await this.mfa.verify(user, code))) {
+        await this.registerFailure(user, meta, 'mfa');
+        throw new UnauthorizedException('Invalid authentication code');
+      }
+    }
+    await this.tokens.consumeOneTime(rawToken, type);
     await this.applyNewPassword(user, newPassword);
   }
 
@@ -239,6 +269,11 @@ export class AuthService {
       );
     }
     await this.applyNewPassword(user, newPassword);
+  }
+
+  /** Break-glass only (server CLI): new password without the old one; signs out everywhere. */
+  async forceSetPassword(userId: string, newPassword: string): Promise<void> {
+    await this.applyNewPassword(await this.users.findById(userId), newPassword);
   }
 
   // ── Internals ─────────────────────────────────────────────────────────
@@ -275,22 +310,20 @@ export class AuthService {
       await this.auditAuth('auth.locked', user.id, meta, {
         lockedUntil: lockedUntil.toISOString(),
       });
+      this.events.emit(
+        AUTH_EVENTS.ACCOUNT_LOCKED,
+        new AccountLockedEvent(
+          user.id,
+          user.email,
+          user.firstName,
+          lockedUntil,
+        ),
+      );
     }
   }
 
-  private assertNotLocked(user: User): void {
-    if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
-      const minutes = Math.ceil(
-        (user.lockedUntil.getTime() - Date.now()) / 60_000,
-      );
-      throw new HttpException(
-        {
-          error: 'ACCOUNT_LOCKED',
-          message: `Too many failed attempts. Try again in ${minutes} minute(s) or ask an administrator to unlock the account.`,
-        },
-        HttpStatus.LOCKED,
-      );
-    }
+  private isLocked(user: User): boolean {
+    return !!user.lockedUntil && user.lockedUntil.getTime() > Date.now();
   }
 
   private auditAuth(

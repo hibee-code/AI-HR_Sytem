@@ -1,10 +1,10 @@
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { configureApp } from './app.setup';
+import { setupSwagger } from './swagger';
 import type { Env } from './config/env.schema';
 import {
   BULL_BOARD_PATH,
@@ -26,27 +26,18 @@ async function bootstrap(): Promise<void> {
 
   configureApp(app);
 
+  setupSwagger(app);
   if (!isProd) {
-    const doc = new DocumentBuilder()
-      .setTitle('AI HR System API')
-      .setDescription('HR management backend with AI-assisted features')
-      .setVersion('1.0')
-      .addBearerAuth(
-        { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
-        'access-token',
-      )
-      .build();
-    const document = SwaggerModule.createDocument(app, doc);
-    SwaggerModule.setup(`${prefix}/docs`, app, document, {
-      swaggerOptions: { persistAuthorization: true },
-    });
     mountBullBoard(app); // unauthenticated: dev only
   }
 
   await app.listen(port);
+  const docs = config.get('SWAGGER_ENABLED', { infer: true })
+    ? `  docs: /${prefix}/docs`
+    : '';
   logger.log(
-    `Listening on http://localhost:${port}/${prefix}/v1` +
-      (isProd ? '' : `  (docs: /${prefix}/docs, queues: ${BULL_BOARD_PATH})`),
+    `Listening on http://localhost:${port}/${prefix}/v1${docs}` +
+      (isProd ? '' : `  queues: ${BULL_BOARD_PATH}`),
   );
 }
 

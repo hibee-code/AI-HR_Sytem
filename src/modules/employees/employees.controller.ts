@@ -38,6 +38,7 @@ import {
 import { Employee, SERIALIZE_FULL } from './entities/employee.entity';
 import { EmployeesService } from './employees.service';
 import { Audit } from '../audit/audit.decorator';
+import { ApiPaginatedResponse } from '../../common/decorators/api-paginated-response.decorator';
 
 /**
  * Visibility rules (see Employee entity's serialisation groups):
@@ -94,6 +95,7 @@ export class EmployeesController {
   @ApiOperation({
     summary: 'Search employees (full or directory view by permission)',
   })
+  @ApiPaginatedResponse(Employee)
   async list(
     @Query() query: ListEmployeesQueryDto,
     @CurrentUser() actor: AuthUser,

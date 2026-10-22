@@ -13,10 +13,33 @@ import {
   Matches,
   MaxLength,
   Min,
+  ValidateBy,
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dto/pagination.dto';
+
+/** { "USD": 1550 } — ISO 4217 code → positive rate into the run currency. */
+function IsFxRates(): PropertyDecorator {
+  return ValidateBy({
+    name: 'isFxRates',
+    validator: {
+      validate: (v: unknown) =>
+        !!v &&
+        typeof v === 'object' &&
+        !Array.isArray(v) &&
+        Object.entries(v).every(
+          ([k, r]) =>
+            /^[A-Z]{3}$/.test(k) &&
+            typeof r === 'number' &&
+            Number.isFinite(r) &&
+            r > 0,
+        ),
+      defaultMessage: () =>
+        'fxRates must map ISO currency codes to positive numbers, e.g. {"USD": 1550}',
+    },
+  });
+}
 import { PayrollRunStatus } from '../entities/payroll-run.entity';
 import {
   LineMethod,
@@ -62,6 +85,15 @@ export class CreateStructureDto {
   payFrequency?: PayFrequency;
   @ApiProperty({ example: 850000 }) @IsNumber() @Min(0) baseAmount: number;
 
+  @ApiPropertyOptional({
+    example: 1800000,
+    description: 'Declared annual rent (NGN) for PAYE rent relief',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  annualRent?: number;
+
   @ApiPropertyOptional({ type: [StructureLineDto] })
   @IsOptional()
   @IsArray()
@@ -93,11 +125,27 @@ export class CreateRunDto {
   @Length(3, 3)
   @Matches(/^[A-Z]{3}$/)
   currency?: string;
+
+  @ApiPropertyOptional({
+    example: { USD: 1550 },
+    description:
+      'Rates into the run currency for structures in other currencies; without one they are skipped',
+  })
+  @IsOptional()
+  @IsFxRates()
+  fxRates?: Record<string, number>;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   @MaxLength(1000)
   notes?: string;
+}
+
+export class SetFxRatesDto {
+  @ApiProperty({ example: { USD: 1550, GBP: 1980 } })
+  @IsFxRates()
+  fxRates: Record<string, number>;
 }
 
 export class ListRunsQueryDto extends PaginationQueryDto {

@@ -155,12 +155,49 @@ describe('LeaveRequestsService', () => {
         Object.assign(balance(), { used: 18 }),
       );
       await expect(service.submit('e1', dto, 'u-emp')).rejects.toThrow(
-        /Insufficient Annual balance: 2 day/,
+        /Insufficient Annual balance for 2026: 2 day/,
       );
       expect(policy.applyToBalance).not.toHaveBeenCalled();
     });
 
-    it('rejects overlapping, cross-year, half-day-on-range and no-working-day requests', async () => {
+    it('charges a request over 31 December to each year’s balance', async () => {
+      requests.findOne
+        .mockResolvedValueOnce(null)
+        .mockImplementation(async () =>
+          Object.assign(requests.save.mock.calls[0][0], {
+            employee,
+            leaveType: annual,
+          }),
+        );
+      policy.countWorkingDays
+        .mockResolvedValueOnce(3) // 2026-12-29 → 12-31
+        .mockResolvedValueOnce(2); // 2027-01-01 → 01-05 (holiday excluded)
+      await service.submit(
+        'e1',
+        { ...dto, startDate: '2026-12-29', endDate: '2027-01-05' },
+        'u-emp',
+      );
+      expect(policy.ensureBalance).toHaveBeenCalledWith('e1', 't1', 2026);
+      expect(policy.ensureBalance).toHaveBeenCalledWith('e1', 't1', 2027);
+      expect(policy.applyToBalance).toHaveBeenCalledWith(expect.anything(), {
+        pending: 3,
+      });
+      expect(policy.applyToBalance).toHaveBeenCalledWith(expect.anything(), {
+        pending: 2,
+      });
+      expect(requests.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          days: 5,
+          year: 2026,
+          allocations: [
+            { year: 2026, days: 3 },
+            { year: 2027, days: 2 },
+          ],
+        }),
+      );
+    });
+
+    it('rejects overlapping, 3-year, half-day-on-range and no-working-day requests', async () => {
       requests.findOne.mockResolvedValueOnce({
         status: LeaveRequestStatus.APPROVED,
       });
@@ -169,8 +206,8 @@ describe('LeaveRequestsService', () => {
       );
 
       await expect(
-        service.submit('e1', { ...dto, endDate: '2027-01-02' }, 'u-emp'),
-      ).rejects.toThrow(/one calendar year/);
+        service.submit('e1', { ...dto, endDate: '2028-01-02' }, 'u-emp'),
+      ).rejects.toThrow(/at most two calendar years/);
 
       policy.countWorkingDays.mockResolvedValueOnce(0);
       await expect(service.submit('e1', dto, 'u-emp')).rejects.toThrow(

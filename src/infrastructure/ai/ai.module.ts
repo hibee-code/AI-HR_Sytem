@@ -4,6 +4,10 @@ import { Logger } from 'nestjs-pino';
 import type { Env } from '../../config/env.schema';
 import { AnthropicChatAdapter } from './anthropic-chat.adapter';
 import { CHAT_MODEL, ChatModel } from './chat-model.interface';
+import {
+  DOCUMENT_READER,
+  NO_DOCUMENT_READER,
+} from './document-reader.interface';
 import { EMBEDDINGS_PROVIDER } from './embeddings.interface';
 import { FakeChatAdapter } from './fake-chat.adapter';
 import { FakeEmbeddingsProvider } from './fake-embeddings.provider';
@@ -39,6 +43,15 @@ import { OpenAiChatAdapter } from './openai-chat.adapter';
       },
     },
     {
+      // Scanned-PDF reading: Claude only (other providers can't read PDFs here).
+      provide: DOCUMENT_READER,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService<Env, true>) =>
+        config.get('AI_DRIVER', { infer: true }) === 'fake'
+          ? NO_DOCUMENT_READER
+          : anthropicFrom(config),
+    },
+    {
       provide: CHAT_MODEL,
       inject: [ConfigService, Logger],
       useFactory: (config: ConfigService<Env, true>, logger: Logger) => {
@@ -50,11 +63,7 @@ import { OpenAiChatAdapter } from './openai-chat.adapter';
             config.get('HF_API_TOKEN', { infer: true }),
             config.get('HF_CHAT_MODEL', { infer: true }),
           ),
-          anthropic: new AnthropicChatAdapter(
-            config.get('ANTHROPIC_API_KEY', { infer: true }),
-            config.get('ANTHROPIC_MODEL', { infer: true }),
-            config.get('ANTHROPIC_EFFORT', { infer: true }),
-          ),
+          anthropic: anthropicFrom(config),
           openai: new OpenAiChatAdapter(
             config.get('OPENAI_API_KEY', { infer: true }),
             config.get('OPENAI_MODEL', { infer: true }),
@@ -79,6 +88,14 @@ import { OpenAiChatAdapter } from './openai-chat.adapter';
       },
     },
   ],
-  exports: [EMBEDDINGS_PROVIDER, CHAT_MODEL],
+  exports: [EMBEDDINGS_PROVIDER, CHAT_MODEL, DOCUMENT_READER],
 })
 export class AiInfrastructureModule {}
+
+function anthropicFrom(config: ConfigService<Env, true>): AnthropicChatAdapter {
+  return new AnthropicChatAdapter(
+    config.get('ANTHROPIC_API_KEY', { infer: true }),
+    config.get('ANTHROPIC_MODEL', { infer: true }),
+    config.get('ANTHROPIC_EFFORT', { infer: true }),
+  );
+}

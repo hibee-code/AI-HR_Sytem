@@ -8,7 +8,7 @@
  * effect applies — onboarding checklists, balances, audit, AI indexing. Jobs
  * are queued for the running app's workers; start the API to process them.
  */
-import './demo-seed.env'; // must stay first
+import '../../cli/no-workers.env'; // must stay first
 import type { INestApplicationContext, Type } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import * as argon2 from 'argon2';

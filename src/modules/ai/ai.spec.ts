@@ -138,6 +138,20 @@ describe('AssistantService', () => {
     );
   });
 
+  it('client disconnect mid-stream: no answer saved, aborted usage logged', async () => {
+    kb.search.mockResolvedValueOnce([policyChunk]);
+    const events = await service.askStream('u1', 'How many leave days?');
+    for await (const e of events) {
+      if (e.type === 'delta') break; // the controller does this on 'close'
+    }
+    // Only the user's question was persisted — no half answer.
+    expect(messages.save).toHaveBeenCalledTimes(1);
+    expect(usage.record).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'unknown' }),
+      { feature: 'assistant', userId: 'u1', aborted: true },
+    );
+  });
+
   it('a stream whose providers all fail ends with an error event', async () => {
     kb.search.mockResolvedValueOnce([policyChunk]);
     jest
@@ -191,8 +205,8 @@ describe('AssistantService', () => {
     const res = await service.ask('u1', 'How many leave days do I get?');
 
     const req = spy.mock.calls[0][0];
-    expect(req.system).toContain('[1] "Leave policy"');
-    expect(req.system).toContain('[2] "Handbook"');
+    expect(req.system).toContain('<excerpt ref="1" title="Leave policy"');
+    expect(req.system).toContain('<excerpt ref="2" title="Handbook"');
     expect(req.messages.at(-1)).toEqual({
       role: 'user',
       content: 'How many leave days do I get?',

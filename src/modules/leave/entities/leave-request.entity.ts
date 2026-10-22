@@ -72,10 +72,27 @@ export class LeaveRequest extends BaseEntity {
   })
   days: number;
 
-  /** Calendar year of startDate; requests may not span years. */
+  /** Calendar year of startDate (for listing). Balances use `allocations`. */
   @ApiProperty()
   @Column({ type: 'int' })
   year: number;
+
+  /**
+   * Working days charged to each calendar year's balance. A request across
+   * 31 December has two entries; null on rows created before this existed
+   * (= all `days` in `year`).
+   */
+  @ApiProperty({
+    type: 'array',
+    items: { type: 'object' },
+    nullable: true,
+    example: [
+      { year: 2026, days: 3 },
+      { year: 2027, days: 2 },
+    ],
+  })
+  @Column({ type: 'jsonb', nullable: true })
+  allocations: { year: number; days: number }[] | null;
 
   @ApiProperty({ nullable: true })
   @Column({ type: 'varchar', length: 1000, nullable: true })

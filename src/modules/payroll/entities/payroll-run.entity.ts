@@ -15,7 +15,9 @@ export interface RunTotals {
   gross: number;
   deductions: number;
   net: number;
-  /** Employees in scope with no salary structure on the period end. */
+  /** Employer-side costs (employer pension, NSITF) on top of gross. */
+  employerCost: number;
+  /** Employees in scope who got no payslip (see `skipped` from calculate). */
   skipped: number;
 }
 
@@ -59,6 +61,15 @@ export class PayrollRun extends BaseEntity {
   @ApiProperty({ type: 'object', additionalProperties: true })
   @Column({ type: 'jsonb', default: () => `'{}'` })
   totals: Partial<RunTotals>;
+
+  /** Units of the run currency per 1 unit of another, e.g. { "USD": 1550 }. */
+  @ApiProperty({
+    type: 'object',
+    additionalProperties: { type: 'number' },
+    example: { USD: 1550 },
+  })
+  @Column({ name: 'fx_rates', type: 'jsonb', default: () => `'{}'` })
+  fxRates: Record<string, number>;
 
   @ApiProperty({ nullable: true })
   @Column({ type: 'varchar', length: 1000, nullable: true })

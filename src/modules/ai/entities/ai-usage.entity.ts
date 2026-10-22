@@ -45,6 +45,16 @@ export class AiUsage {
   @Column({ name: 'output_tokens', type: 'int', default: 0 })
   outputTokens: number;
 
+  @Column({ name: 'cache_read_tokens', type: 'int', default: 0 })
+  cacheReadTokens: number;
+
+  @Column({ name: 'cache_write_tokens', type: 'int', default: 0 })
+  cacheWriteTokens: number;
+
+  /** Streamed answer cut off because the client disconnected (tokens estimated). */
+  @Column({ type: 'boolean', default: false })
+  aborted: boolean;
+
   @Column({
     name: 'cost_usd',
     type: 'numeric',

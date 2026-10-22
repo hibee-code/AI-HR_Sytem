@@ -6,16 +6,10 @@ import { addDays } from '../src/common/utils/date';
 import { DepartmentsSeeder } from '../src/database/seeds/departments.seeder';
 import { LeavePolicySeeder } from '../src/database/seeds/leave-policy.seeder';
 import { AUTH_EVENTS, UserInvitedEvent } from '../src/modules/auth/auth.events';
+import { futureMonday, inProgressSpan } from './utils/dates';
 import { ADMIN, createTestApp, destroyTestApp } from './utils/test-app';
 
 const BASE = '/api/v1';
-
-/** Next Monday at least 7 days out, so requests are in the future and start on a working day. */
-function nextMonday(): string {
-  let d = addDays(new Date().toISOString().slice(0, 10), 7);
-  while (new Date(`${d}T00:00:00Z`).getUTCDay() !== 1) d = addDays(d, 1);
-  return d;
-}
 
 describe('Leave & attendance (e2e)', () => {
   let app: INestApplication;
@@ -109,14 +103,14 @@ describe('Leave & attendance (e2e)', () => {
 
   describe('leave', () => {
     let requestId: string;
-    const monday = nextMonday();
+    // Future Monday whose next month stays in one year (requests can't cross
+    // 31 Dec); balances are read for that year.
+    const monday = futureMonday();
+    const balancesUrl = `${BASE}/leave/balances/me?year=${monday.slice(0, 4)}`;
 
     it('balances are provisioned lazily with the full entitlement for a prior-year hire', async () => {
       const balances = (
-        await http()
-          .get(`${BASE}/leave/balances/me`)
-          .set(auth(employeeToken))
-          .expect(200)
+        await http().get(balancesUrl).set(auth(employeeToken)).expect(200)
       ).body;
       const annual = balances.find(
         (b: { leaveTypeId: string }) => b.leaveTypeId === annualTypeId,
@@ -148,9 +142,8 @@ describe('Leave & attendance (e2e)', () => {
       requestId = res.body.id;
       expect(res.body).toMatchObject({ days: 3, status: 'PENDING' });
 
-      const balances = (
-        await http().get(`${BASE}/leave/balances/me`).set(auth(employeeToken))
-      ).body;
+      const balances = (await http().get(balancesUrl).set(auth(employeeToken)))
+        .body;
       expect(
         balances.find(
           (b: { leaveTypeId: string }) => b.leaveTypeId === annualTypeId,
@@ -228,9 +221,8 @@ describe('Leave & attendance (e2e)', () => {
         .set(auth(employeeToken))
         .send({})
         .expect(201);
-      const balances = (
-        await http().get(`${BASE}/leave/balances/me`).set(auth(employeeToken))
-      ).body;
+      const balances = (await http().get(balancesUrl).set(auth(employeeToken)))
+        .body;
       expect(
         balances.find(
           (b: { leaveTypeId: string }) => b.leaveTypeId === annualTypeId,
@@ -297,7 +289,8 @@ describe('Leave & attendance (e2e)', () => {
     it('long leave approved by HR while in progress flips status to ON_LEAVE', async () => {
       // ON_LEAVE needs ≥ 30 calendar days, which is more annual leave than
       // the 20-day entitlement — a long unpaid leave is the realistic case.
-      const start = addDays(monday, -14); // already started
+      // Already started, still running, within this calendar year.
+      const { start, end } = inProgressSpan(35);
       const res = await http()
         .post(`${BASE}/leave/requests/on-behalf`)
         .set(auth(admin))
@@ -305,7 +298,7 @@ describe('Leave & attendance (e2e)', () => {
           employeeId,
           leaveTypeId: unpaidTypeId,
           startDate: start,
-          endDate: addDays(start, 34),
+          endDate: end,
         })
         .expect(201);
       await http()
@@ -327,6 +320,55 @@ describe('Leave & attendance (e2e)', () => {
         (await http().get(`${BASE}/employees/${employeeId}`).set(auth(admin)))
           .body.status,
       ).toBe('ACTIVE');
+    });
+
+    it('a request over 31 December charges each year; Nigerian holidays are skipped; cancel releases both', async () => {
+      const y = new Date().getUTCFullYear() + 1; // a future year, clear of the other tests
+      const added = (
+        await http()
+          .post(`${BASE}/leave/holidays/nigeria/${y + 1}`)
+          .set(auth(admin))
+          .expect(201)
+      ).body;
+      expect(added.added.map((h: { name: string }) => h.name)).toContain(
+        "New Year's Day",
+      );
+
+      const req = (
+        await http()
+          .post(`${BASE}/leave/requests`)
+          .set(auth(employeeToken))
+          .send({
+            leaveTypeId: annualTypeId,
+            startDate: `${y}-12-29`,
+            endDate: `${y + 1}-01-05`,
+          })
+          .expect(201)
+      ).body;
+      const [first, second] = req.allocations;
+      expect(first.year).toBe(y);
+      expect(second.year).toBe(y + 1);
+      expect(first.days + second.days).toBe(req.days);
+
+      const pending = async (year: number) =>
+        (
+          await http()
+            .get(`${BASE}/leave/balances/me?year=${year}`)
+            .set(auth(employeeToken))
+            .expect(200)
+        ).body.find(
+          (b: { leaveTypeId: string }) => b.leaveTypeId === annualTypeId,
+        ).pending;
+      expect(await pending(y)).toBe(first.days);
+      expect(await pending(y + 1)).toBe(second.days);
+
+      await http()
+        .post(`${BASE}/leave/requests/${req.id}/cancel`)
+        .set(auth(employeeToken))
+        .send({})
+        .expect(201);
+      expect(await pending(y)).toBe(0);
+      expect(await pending(y + 1)).toBe(0);
     });
   });
 

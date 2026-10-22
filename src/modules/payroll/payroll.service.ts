@@ -45,7 +45,11 @@ import {
   SalaryStructure,
 } from './entities/salary-structure.entity';
 import { PAYROLL_CALCULATOR, round2 } from './payroll-calculator';
-import type { PayrollCalculator } from './payroll-calculator';
+import type {
+  PayrollCalculator,
+  PaySegment,
+  Period,
+} from './payroll-calculator';
 import { renderPayslipPdf } from './payslip-pdf';
 
 @Injectable()
@@ -112,6 +116,7 @@ export class PayrollService {
         currency: dto.currency ?? this.defaultCurrency,
         payFrequency: dto.payFrequency,
         baseAmount: dto.baseAmount,
+        annualRent: dto.annualRent ?? null,
         lines,
         notes: dto.notes ?? null,
         createdByUserId: actorUserId,
@@ -124,6 +129,52 @@ export class PayrollService {
       where: { employeeId },
       order: { effectiveFrom: 'DESC' },
     });
+  }
+
+  /**
+   * The structures in force during a period, each clipped to the days it
+   * covers — a mid-period change yields two segments paid for their own days.
+   */
+  async segmentsFor(employeeId: string, period: Period): Promise<PaySegment[]> {
+    const structures = await this.structures
+      .createQueryBuilder('s')
+      .where('s.employeeId = :employeeId', { employeeId })
+      .andWhere('s.effectiveFrom <= :end', { end: period.end })
+      .andWhere('(s.effectiveTo IS NULL OR s.effectiveTo >= :start)', {
+        start: period.start,
+      })
+      .orderBy('s.effectiveFrom', 'ASC')
+      .getMany();
+    return structures.map((structure) => ({
+      structure,
+      start:
+        structure.effectiveFrom > period.start
+          ? structure.effectiveFrom
+          : period.start,
+      end:
+        structure.effectiveTo && structure.effectiveTo < period.end
+          ? structure.effectiveTo
+          : period.end,
+    }));
+  }
+
+  /** FX rates can be set until the run is approved (they're often known late). */
+  async setFxRates(
+    id: string,
+    fxRates: Record<string, number>,
+  ): Promise<PayrollRun> {
+    const run = await this.findRun(id);
+    if (
+      ![PayrollRunStatus.DRAFT, PayrollRunStatus.CALCULATED].includes(
+        run.status,
+      )
+    )
+      throw new BadRequestException(
+        `Cannot change rates on a ${run.status} run`,
+      );
+    run.fxRates = fxRates;
+    await this.runs.save(run);
+    return this.findRun(id);
   }
 
   /** Structure in force on a date, or null. */
@@ -167,6 +218,7 @@ export class PayrollService {
         status: PayrollRunStatus.DRAFT,
         departmentId: dto.departmentId ?? null,
         currency: dto.currency ?? this.defaultCurrency,
+        fxRates: dto.fxRates ?? {},
         totals: {},
         notes: dto.notes ?? null,
         createdByUserId: actorUserId,
@@ -231,43 +283,68 @@ export class PayrollService {
     });
 
     await this.payslips.delete({ runId: id });
+    const ytd = await this.yearToDate(run);
     const skipped: { employeeId: string; reason: string }[] = [];
     const totals: RunTotals = {
       employees: 0,
       gross: 0,
       deductions: 0,
       net: 0,
+      employerCost: 0,
       skipped: 0,
     };
+    const period = { start: run.periodStart, end: run.periodEnd };
 
     for (const e of emps) {
-      const structure = await this.structureOn(e.id, run.periodEnd);
-      if (!structure) {
+      const segments = await this.segmentsFor(e.id, period);
+      if (segments.length === 0) {
         skipped.push({ employeeId: e.id, reason: 'no salary structure' });
         continue;
       }
-      if (structure.currency !== run.currency) {
+      const missingFx = segments.find(
+        (s) =>
+          s.structure.currency !== run.currency &&
+          !run.fxRates[s.structure.currency],
+      );
+      if (missingFx) {
         skipped.push({
           employeeId: e.id,
-          reason: `currency ${structure.currency} ≠ run ${run.currency}`,
+          reason: `no FX rate ${missingFx.structure.currency}→${run.currency} on this run (set fxRates)`,
         });
         continue;
       }
       const c = this.calculator.calculate(
-        structure,
-        { start: run.periodStart, end: run.periodEnd },
+        segments.map((s) => ({
+          ...s,
+          structure: toCurrency(s.structure, run.currency, run.fxRates),
+        })),
+        period,
         { hireDate: e.hireDate, terminationDate: e.terminationDate },
+        ytd.get(e.id),
+      );
+      if (c.employedFraction === 0) {
+        // e.g. termination dated before the hire date, or outside the period
+        skipped.push({
+          employeeId: e.id,
+          reason: `not employed during the period (hired ${e.hireDate}${e.terminationDate ? `, terminated ${e.terminationDate}` : ''})`,
+        });
+        continue;
+      }
+      const employerCost = round2(
+        c.employerCosts.reduce((sum, x) => sum + x.amount, 0),
       );
       await this.payslips.save(
         this.payslips.create({
           runId: id,
           employeeId: e.id,
-          structureId: structure.id,
+          structureId: segments[segments.length - 1].structure.id,
+          employerCosts: c.employerCosts,
           currency: run.currency,
           baseAmount: c.baseAmount,
           gross: c.gross,
           totalDeductions: c.totalDeductions,
           net: c.net,
+          taxableAmount: c.taxableAmount ?? null,
           lines: c.lines,
           documentId: null,
         }),
@@ -276,6 +353,7 @@ export class PayrollService {
       totals.gross = round2(totals.gross + c.gross);
       totals.deductions = round2(totals.deductions + c.totalDeductions);
       totals.net = round2(totals.net + c.net);
+      totals.employerCost = round2(totals.employerCost + employerCost);
     }
     totals.skipped = skipped.length;
 
@@ -283,6 +361,54 @@ export class PayrollService {
     run.status = PayrollRunStatus.CALCULATED;
     await this.runs.save(run);
     return { run: await this.findRun(id), skipped };
+  }
+
+  /**
+   * Per employee: taxable pay and PAYE from approved/paid runs earlier in
+   * the same tax (calendar) year. Payslips from before taxable pay was
+   * recorded are ignored, so those employees fall back to the steady-pay
+   * assumption in cumulativePaye().
+   */
+  private async yearToDate(
+    run: PayrollRun,
+  ): Promise<Map<string, { taxable: number; paye: number; periods: number }>> {
+    const rows: {
+      employee_id: string;
+      taxable: string;
+      paye: string;
+      periods: string;
+    }[] = await this.payslips.query(
+      `SELECT p.employee_id,
+              SUM(p.taxable_amount) AS taxable,
+              SUM((SELECT COALESCE(SUM((l->>'amount')::numeric), 0)
+                     FROM jsonb_array_elements(p.lines) l
+                    WHERE l->>'type' = 'DEDUCTION'
+                      AND upper(l->>'code') IN ('PAYE', 'TAX'))) AS paye,
+              COUNT(*) AS periods
+         FROM payslips p
+         JOIN payroll_runs r ON r.id = p.run_id
+        WHERE r.status IN ($1, $2)
+          AND r.period_end >= $3
+          AND r.period_end < $4
+          AND p.taxable_amount IS NOT NULL
+        GROUP BY p.employee_id`,
+      [
+        PayrollRunStatus.APPROVED,
+        PayrollRunStatus.PAID,
+        `${run.periodEnd.slice(0, 4)}-01-01`,
+        run.periodStart,
+      ],
+    );
+    return new Map(
+      rows.map((r) => [
+        r.employee_id,
+        {
+          taxable: Number(r.taxable),
+          paye: Number(r.paye),
+          periods: Number(r.periods),
+        },
+      ]),
+    );
   }
 
   /** Freezes the run, renders PDFs into RESTRICTED payslip documents and tells employees. */
@@ -414,4 +540,27 @@ export class PayrollService {
       throw new ForbiddenException();
     return p;
   }
+}
+
+/**
+ * A copy of the structure in the run currency: base and FIXED lines are
+ * multiplied by the rate (percentages are unaffected); declared rent too.
+ */
+function toCurrency(
+  s: SalaryStructure,
+  currency: string,
+  rates: Record<string, number>,
+): SalaryStructure {
+  if (s.currency === currency) return s;
+  const rate = rates[s.currency];
+  return Object.assign(Object.create(Object.getPrototypeOf(s)), s, {
+    currency,
+    baseAmount: round2(s.baseAmount * rate),
+    annualRent: s.annualRent === null ? null : round2(s.annualRent * rate),
+    lines: s.lines.map((l) =>
+      l.method === LineMethod.FIXED
+        ? { ...l, value: round2(l.value * rate) }
+        : l,
+    ),
+  }) as SalaryStructure;
 }

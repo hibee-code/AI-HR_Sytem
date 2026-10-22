@@ -46,6 +46,8 @@ import {
 } from './dto/documents.dto';
 import type { UploadedFile } from './dto/documents.dto';
 import { Audit } from '../audit/audit.decorator';
+import { Document } from './entities/document.entity';
+import { ApiPaginatedResponse } from '../../common/decorators/api-paginated-response.decorator';
 
 /** Multer keeps files in memory; the service enforces size/type before anything is stored. */
 const upload = () =>
@@ -115,6 +117,7 @@ export class DocumentsController {
     PERMISSIONS.DOCUMENT_READ_ALL,
   )
   @ApiOperation({ summary: 'Documents I may see (HR: all), filterable' })
+  @ApiPaginatedResponse(Document)
   list(@Query() query: ListDocumentsQueryDto, @CurrentUser() actor: AuthUser) {
     return this.documents.list(query, actor);
   }
@@ -122,6 +125,7 @@ export class DocumentsController {
   @Get('me')
   @RequirePermissions(PERMISSIONS.DOCUMENT_READ_SELF)
   @ApiOperation({ summary: 'My own documents' })
+  @ApiPaginatedResponse(Document)
   async mine(
     @Query() query: ListDocumentsQueryDto,
     @CurrentUser() actor: AuthUser,

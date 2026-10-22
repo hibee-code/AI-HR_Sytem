@@ -10,11 +10,19 @@ export interface ChatRequest {
   maxTokens: number;
 }
 
+/** inputTokens = all prompt tokens; the cache fields say how many of them hit / filled the cache. */
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+}
+
 export interface ChatResponse {
   text: string;
   provider: string;
   model: string;
-  usage?: { inputTokens: number; outputTokens: number };
+  usage?: TokenUsage;
 }
 
 /**

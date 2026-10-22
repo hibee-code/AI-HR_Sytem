@@ -1,3 +1,5 @@
+# Local development stack. Credentials come only from .env (no defaults here):
+#   docker compose --profile dev up -d postgres redis mailpit
 name: ai-hr-system
 
 services:
@@ -6,16 +8,16 @@ services:
     container_name: hr-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${DB_USERNAME:-hr}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-hr}
-      POSTGRES_DB: ${DB_NAME:-hr_system}
+      POSTGRES_USER: ${DB_USERNAME:?set DB_USERNAME in .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      POSTGRES_DB: ${DB_NAME:?set DB_NAME in .env}
     ports:
       - '${DB_PORT:-5432}:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${DB_USERNAME:-hr} -d ${DB_NAME:-hr_system}']
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
       interval: 5s
       timeout: 5s
       retries: 10
@@ -24,13 +26,17 @@ services:
     image: redis:7-alpine
     container_name: hr-redis
     restart: unless-stopped
-    command: ['redis-server', '--appendonly', 'yes', '--maxmemory-policy', 'noeviction']
+    # REDIS_PASSWORD from .env is optional in dev: set → Redis requires it, empty → no auth.
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command: ['sh', '/usr/local/bin/redis.sh', '--appendonly', 'yes', '--maxmemory-policy', 'noeviction']
     ports:
       - '${REDIS_PORT:-6379}:6379'
     volumes:
       - redis_data:/data
+      - ./docker/redis/redis.sh:/usr/local/bin/redis.sh:ro
     healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
+      test: ['CMD', 'sh', '/usr/local/bin/redis.sh', '--health']
       interval: 5s
       timeout: 3s
       retries: 10
@@ -64,7 +70,7 @@ services:
       redis:
         condition: service_healthy
     # Migrations run before the app starts so the schema is always current.
-    command: sh -c "npm run migration:run:prod && node dist/main"
+    command: sh -c "node dist/database/migrate.js && exec node dist/main"
     profiles: ['full']
 
 volumes:

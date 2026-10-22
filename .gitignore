@@ -41,3 +41,6 @@ lerna-debug.log*
 
 # docker volumes (if bind-mounted locally)
 /docker/data
+
+# database dumps (docker-compose.prod.yml backup service)
+/backups

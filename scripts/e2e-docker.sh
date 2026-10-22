@@ -12,19 +12,41 @@ cd "$(dirname "$0")/.."
 
 COMPOSE=(docker compose -f docker-compose.test.yml)
 
+# ── Credentials for the throwaway stack ──────────────────────────────────
+# Precedence: already in the environment (e.g. CI) → TEST_* in .env → random
+# for this run. Only these four keys are read from .env — never the whole
+# file, so the real DB_/REDIS_ settings can't leak into the suite.
+dotenv_value() {
+  [[ -f .env ]] || return 0
+  grep -E "^$1=" .env | tail -n1 | cut -d= -f2- | sed -E 's/[[:space:]]+#.*$//; s/^"(.*)"$/\1/; s/^'"'"'(.*)'"'"'$/\1/'
+}
+random_secret() { openssl rand -hex 24; }
+for key in TEST_DB_USERNAME TEST_DB_PASSWORD TEST_DB_NAME TEST_REDIS_PASSWORD; do
+  if [[ -z "${!key:-}" ]]; then
+    value="$(dotenv_value "$key")"
+    case "$key" in
+      TEST_DB_USERNAME) default=hr_test ;;
+      TEST_DB_NAME) default=hr_system_test ;;
+      *) default="$(random_secret)" ;;
+    esac
+    export "$key=${value:-$default}"
+  fi
+done
+
 # Explicit values win over .env (dotenv never overrides the environment), so
 # the suite can't reach real databases, Slack, SMTP or AI providers.
 export NODE_ENV=test E2E_ISOLATED=1
-# Must match docker-compose.test.yml.
-export DB_HOST=127.0.0.1 DB_PORT=5433 DB_USERNAME=postgres DB_PASSWORD=root
-export DB_NAME=HR_System DB_TEST_NAME=HR_System DB_SSL=false DB_LOGGING=false
-export REDIS_HOST=127.0.0.1 REDIS_PORT=6380 REDIS_PASSWORD= REDIS_DB=0
+# Ports must match docker-compose.test.yml.
+export DB_HOST=127.0.0.1 DB_PORT=5433 DB_SSL=false DB_LOGGING=false
+export DB_USERNAME="$TEST_DB_USERNAME" DB_PASSWORD="$TEST_DB_PASSWORD"
+export DB_NAME="$TEST_DB_NAME" DB_TEST_NAME="$TEST_DB_NAME"
+export REDIS_HOST=127.0.0.1 REDIS_PORT=6380 REDIS_PASSWORD="$TEST_REDIS_PASSWORD" REDIS_DB=0
 export SLACK_BOT_TOKEN= SMTP_HOST=127.0.0.1 SMTP_USER= SMTP_PASSWORD=
 export STORAGE_DRIVER=memory AI_DRIVER=fake THROTTLE_ENABLED=false
 export HF_API_TOKEN= ANTHROPIC_API_KEY= OPENAI_API_KEY=
-export JWT_ACCESS_SECRET=e2e-access-secret-e2e-access-secret-000000
-export JWT_REFRESH_SECRET=e2e-refresh-secret-e2e-refresh-secret-00000
-export MFA_ENCRYPTION_KEY=e2e-mfa-key-e2e-mfa-key-e2e-mfa-key-000
+# Signing / encryption keys are only meaningful for one run: always fresh.
+export JWT_ACCESS_SECRET="$(random_secret)" JWT_REFRESH_SECRET="$(random_secret)"
+export MFA_ENCRYPTION_KEY="$(random_secret)"
 # The suites log in as ADMIN everywhere; MFA enforcement has its own tests.
 export MFA_REQUIRED_ROLES=
 

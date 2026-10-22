@@ -32,7 +32,9 @@
     "seed:demo": "ts-node src/database/seeds/demo-seed.ts",
     "seed:catalogue": "node dist/database/seeds/run-seed.js --catalogue-only",
     "seed:admin": "node dist/database/seeds/run-seed.js --bootstrap-admin",
-    "postman": "node scripts/postman.mjs"
+    "postman": "node scripts/postman.mjs",
+    "account:recover": "node dist/cli/recover-account.js",
+    "migrate:prod": "node dist/database/migrate.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.127.0",

@@ -1,4 +1,6 @@
 import {
+  BadRequestException,
+  ParseIntPipe,
   Body,
   Controller,
   Delete,
@@ -41,6 +43,8 @@ import {
 } from './dto/leave.dto';
 import { LeavePolicyService } from './leave-policy.service';
 import { LeaveRequestsService } from './leave-requests.service';
+import { LeaveRequest } from './entities/leave-request.entity';
+import { ApiPaginatedResponse } from '../../common/decorators/api-paginated-response.decorator';
 
 @ApiTags('leave')
 @ApiBearerAuth('access-token')
@@ -87,6 +91,27 @@ export class LeaveController {
   @RequirePermissions(PERMISSIONS.LEAVE_MANAGE_POLICY)
   addHoliday(@Body() dto: PublicHolidayDto) {
     return this.policy.addHoliday(dto);
+  }
+
+  @Post('holidays/nigeria/:year')
+  @RequirePermissions(PERMISSIONS.LEAVE_MANAGE_POLICY)
+  @ApiOperation({
+    summary:
+      "Add the year's Nigerian public holidays (fixed + Easter-based); Islamic holidays are added by hand once declared",
+  })
+  addNigerianHolidays(
+    @Param(
+      'year',
+      new ParseIntPipe({
+        exceptionFactory: () =>
+          new BadRequestException('year must be a number'),
+      }),
+    )
+    year: number,
+  ) {
+    if (year < 2000 || year > 2100)
+      throw new BadRequestException('year must be between 2000 and 2100');
+    return this.policy.addNigerianHolidays(year);
   }
 
   @Delete('holidays/:id')
@@ -151,6 +176,7 @@ export class LeaveController {
 
   @Get('requests/me')
   @RequirePermissions(PERMISSIONS.LEAVE_READ_SELF)
+  @ApiPaginatedResponse(LeaveRequest)
   async myRequests(
     @Query() query: ListLeaveRequestsQueryDto,
     @CurrentUser() actor: AuthUser,
@@ -170,6 +196,7 @@ export class LeaveController {
   @Get('requests/team')
   @RequirePermissions(PERMISSIONS.LEAVE_READ_TEAM)
   @ApiOperation({ summary: 'Requests of my direct reports (team calendar)' })
+  @ApiPaginatedResponse(LeaveRequest)
   async team(
     @Query() query: ListLeaveRequestsQueryDto,
     @CurrentUser() actor: AuthUser,
@@ -188,6 +215,7 @@ export class LeaveController {
     summary:
       'All requests (HR), filterable by employee/department/status/window',
   })
+  @ApiPaginatedResponse(LeaveRequest)
   listAll(@Query() query: ListLeaveRequestsQueryDto) {
     return this.requests.list(query);
   }

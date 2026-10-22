@@ -80,6 +80,44 @@ describe('validateEnv', () => {
     expect(validateEnv(prodValid).NODE_ENV).toBe('production');
   });
 
+  it('Swagger: on by default outside production, off in it, basic auth required to enable', () => {
+    expect(validateEnv(valid).SWAGGER_ENABLED).toBe(true);
+    expect(validateEnv(prodValid).SWAGGER_ENABLED).toBe(false);
+    expect(() =>
+      validateEnv({ ...prodValid, SWAGGER_ENABLED: 'true' }),
+    ).toThrow(/SWAGGER_USER/);
+    expect(
+      validateEnv({
+        ...prodValid,
+        SWAGGER_ENABLED: 'true',
+        SWAGGER_USER: 'qa',
+        SWAGGER_PASSWORD: 'secret',
+      }).SWAGGER_ENABLED,
+    ).toBe(true);
+  });
+
+  it('parses per-role AI limits and rejects malformed ones', () => {
+    expect(
+      validateEnv({
+        ...valid,
+        AI_DAILY_LIMIT_OVERRIDES: 'HR_MANAGER=200, ADMIN=0',
+      }).AI_DAILY_LIMIT_OVERRIDES,
+    ).toEqual({ HR_MANAGER: 200, ADMIN: 0 });
+    expect(() =>
+      validateEnv({ ...valid, AI_DAILY_LIMIT_OVERRIDES: 'hr=lots' }),
+    ).toThrow(/AI_DAILY_LIMIT_OVERRIDES/);
+  });
+
+  it('audit retention is 0 (forever) or at least a year', () => {
+    expect(validateEnv(valid).RETENTION_AUDIT_DAYS).toBe(2555);
+    expect(
+      validateEnv({ ...valid, RETENTION_AUDIT_DAYS: '0' }).RETENTION_AUDIT_DAYS,
+    ).toBe(0);
+    expect(() => validateEnv({ ...valid, RETENTION_AUDIT_DAYS: '30' })).toThrow(
+      /RETENTION_AUDIT_DAYS/,
+    );
+  });
+
   it('forbids dev-only drivers in production', () => {
     const prod = {
       ...valid,

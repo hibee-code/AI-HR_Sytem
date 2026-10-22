@@ -9,6 +9,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Put,
   Query,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -19,12 +20,16 @@ import { EmployeesService } from '../employees/employees.service';
 import { PERMISSIONS } from '../rbac/permissions.catalogue';
 import {
   CreateRunDto,
+  SetFxRatesDto,
   CreateStructureDto,
   ListPayslipsQueryDto,
   ListRunsQueryDto,
 } from './dto/payroll.dto';
 import { PayrollService } from './payroll.service';
 import { Audit } from '../audit/audit.decorator';
+import { Payslip } from './entities/payslip.entity';
+import { PayrollRun } from './entities/payroll-run.entity';
+import { ApiPaginatedResponse } from '../../common/decorators/api-paginated-response.decorator';
 
 @ApiTags('payroll')
 @ApiBearerAuth('access-token')
@@ -70,6 +75,7 @@ export class PayrollController {
 
   @Get('runs')
   @RequirePermissions(PERMISSIONS.PAYROLL_MANAGE)
+  @ApiPaginatedResponse(PayrollRun)
   listRuns(@Query() query: ListRunsQueryDto) {
     return this.payroll.listRuns(query);
   }
@@ -87,6 +93,20 @@ export class PayrollController {
   @RequirePermissions(PERMISSIONS.PAYROLL_MANAGE)
   getRun(@Param('id', ParseUUIDPipe) id: string) {
     return this.payroll.findRun(id);
+  }
+
+  @Put('runs/:id/fx-rates')
+  @RequirePermissions(PERMISSIONS.PAYROLL_MANAGE)
+  @Audit('payroll.run.fx_rates', 'payroll_run', { bodyKeys: ['fxRates'] })
+  @ApiOperation({
+    summary:
+      'Set FX rates (into the run currency) before calculating; draft/calculated runs only',
+  })
+  setFxRates(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SetFxRatesDto,
+  ) {
+    return this.payroll.setFxRates(id, dto.fxRates);
   }
 
   @Audit('payroll.run.calculate', 'payroll_run')
@@ -130,6 +150,7 @@ export class PayrollController {
 
   @Get('payslips')
   @RequirePermissions(PERMISSIONS.PAYROLL_MANAGE)
+  @ApiPaginatedResponse(Payslip)
   listPayslips(@Query() query: ListPayslipsQueryDto) {
     return this.payroll.listPayslips(query);
   }
@@ -137,6 +158,7 @@ export class PayrollController {
   @Get('payslips/me')
   @RequirePermissions(PERMISSIONS.PAYROLL_READ_SELF)
   @ApiOperation({ summary: 'My payslips from approved/paid runs' })
+  @ApiPaginatedResponse(Payslip)
   async myPayslips(
     @Query() query: ListPayslipsQueryDto,
     @CurrentUser() actor: AuthUser,

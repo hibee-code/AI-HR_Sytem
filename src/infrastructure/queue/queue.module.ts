@@ -25,7 +25,9 @@ import { REDIS_OPTIONS } from '../redis/redis.constants';
           attempts: 5,
           backoff: { type: 'exponential', delay: 5_000 },
           removeOnComplete: { count: 1_000, age: 24 * 3600 },
-          removeOnFail: { count: 5_000 },
+          // Bounded too: with Redis `noeviction`, unbounded history would end
+          // in failed writes and stalled queues.
+          removeOnFail: { count: 5_000, age: 7 * 24 * 3600 },
         },
       }),
     }),

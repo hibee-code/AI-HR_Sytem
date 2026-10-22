@@ -39,6 +39,8 @@ import {
 import { ChecklistType } from './entities/checklist-template.entity';
 import { OnboardingProcessor } from './onboarding.processor';
 import { OnboardingService } from './onboarding.service';
+import { Checklist } from './entities/checklist.entity';
+import { ApiPaginatedResponse } from '../../common/decorators/api-paginated-response.decorator';
 
 @ApiTags('onboarding')
 @ApiBearerAuth('access-token')
@@ -126,6 +128,7 @@ export class OnboardingController {
 
   @Get('checklists')
   @RequirePermissions(PERMISSIONS.ONBOARDING_READ)
+  @ApiPaginatedResponse(Checklist)
   listChecklists(@Query() query: ListChecklistsQueryDto) {
     return this.onboarding.list(query);
   }

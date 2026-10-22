@@ -88,6 +88,18 @@ export class SalaryStructure extends BaseEntity {
   @Column({ type: 'jsonb', default: () => `'[]'` })
   lines: StructureLine[];
 
+  /** Declared annual rent (NGN) for PAYE rent relief; null = none claimed. */
+  @ApiProperty({ nullable: true, example: 1_800_000 })
+  @Column({
+    name: 'annual_rent',
+    type: 'numeric',
+    precision: 14,
+    scale: 2,
+    nullable: true,
+    transformer: numericTransformer,
+  })
+  annualRent: number | null;
+
   @ApiProperty({ nullable: true })
   @Column({ type: 'varchar', length: 1000, nullable: true })
   notes: string | null;

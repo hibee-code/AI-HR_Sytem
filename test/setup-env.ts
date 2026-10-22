@@ -15,8 +15,5 @@ if (process.env.E2E_ISOLATED !== '1') {
 process.env.NODE_ENV = 'test';
 process.env.LOG_LEVEL = process.env.LOG_LEVEL ?? 'fatal';
 process.env.DB_NAME = process.env.DB_TEST_NAME ?? process.env.DB_NAME;
-process.env.JWT_ACCESS_SECRET ??= 'test-access-secret-test-access-secret-0000';
-process.env.JWT_REFRESH_SECRET ??= 'test-refresh-secret-test-refresh-secret-00';
-process.env.MFA_ENCRYPTION_KEY ??= 'test-mfa-key-test-mfa-key-test-mfa-key-00';
 process.env.STORAGE_DRIVER = 'memory';
 process.env.AI_DRIVER = 'fake';

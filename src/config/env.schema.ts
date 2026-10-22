@@ -37,6 +37,14 @@ export const envSchema = z.object({
   LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
     .default('info'),
+  /** Swagger UI at /<API_PREFIX>/docs. Default: on outside production. */
+  SWAGGER_ENABLED: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === 'true')),
+  /** Basic-auth for the docs; required when SWAGGER_ENABLED in production. */
+  SWAGGER_USER: z.string().optional(),
+  SWAGGER_PASSWORD: z.string().optional(),
 
   // ── Database ──────────────────────────────────────────────────────────
   DB_HOST: z.string().min(1),
@@ -96,6 +104,11 @@ export const envSchema = z.object({
         .map((r) => r.trim().toUpperCase())
         .filter(Boolean),
     ),
+  /**
+   * Accepted TOTP clock drift in 30 s steps either side (1 = ±30 s, the RFC
+   * recommendation). Raise only for users with badly synced phones.
+   */
+  MFA_TOTP_WINDOW: z.coerce.number().int().min(1).max(3).default(1),
   LOGIN_MAX_ATTEMPTS: z.coerce.number().int().min(3).max(20).default(5),
   LOGIN_LOCKOUT_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
 
@@ -137,6 +150,23 @@ export const envSchema = z.object({
   SLACK_BOT_TOKEN: z.string().optional(),
   SLACK_DEFAULT_CHANNEL: z.string().default('#hr-notifications'),
 
+  // ── Retention (NDPA) — days; 0 = keep forever ──────────────────────────
+  /** Audit trail. 0, or ≥ 365 (the database refuses to delete younger rows). */
+  RETENTION_AUDIT_DAYS: z.coerce
+    .number()
+    .int()
+    .refine((d) => d === 0 || d >= 365, '0 or at least 365')
+    .default(2555),
+  RETENTION_AI_CONVERSATION_DAYS: z.coerce.number().int().min(0).default(365),
+  RETENTION_AI_USAGE_DAYS: z.coerce.number().int().min(0).default(730),
+  RETENTION_NOTIFICATION_LOG_DAYS: z.coerce.number().int().min(0).default(365),
+  /** Applicants whose applications were all rejected/withdrawn this long ago. */
+  RETENTION_CANDIDATE_DAYS: z.coerce.number().int().min(0).default(365),
+  RETENTION_CRON: z
+    .string()
+    .regex(/^(\S+\s+){4}\S+$/, 'expected a 5-field cron expression')
+    .default('30 3 * * *'),
+
   // ── AI ────────────────────────────────────────────────────────────────
   /** fake = deterministic in-process embeddings + chat (tests, offline dev). */
   AI_DRIVER: z.enum(['live', 'fake']).default('live'),
@@ -171,8 +201,35 @@ export const envSchema = z.object({
     .min(256)
     .max(16000)
     .default(8192),
+  /** Strip e-mails, phone numbers, links and the candidate's name from résumés sent to AI providers. */
+  AI_REDACT_PII: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
   /** Assistant questions (model calls) per user per UTC day; 0 = unlimited. */
   AI_DAILY_MESSAGE_LIMIT: z.coerce.number().int().min(0).default(50),
+  /** Per-role caps that replace the default, e.g. "HR_MANAGER=200,ADMIN=0" (0 = unlimited). */
+  AI_DAILY_LIMIT_OVERRIDES: z
+    .string()
+    .default('')
+    .transform((s, ctx) => {
+      const out: Record<string, number> = {};
+      for (const part of s
+        .split(',')
+        .map((p) => p.trim())
+        .filter(Boolean)) {
+        const m = /^([A-Z][A-Z0-9_]*)=(\d+)$/.exec(part);
+        if (!m) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `expected ROLE=number, got "${part}"`,
+          });
+          return z.NEVER;
+        }
+        out[m[1]] = Number(m[2]);
+      }
+      return out;
+    }),
   /** Chunks below this cosine similarity are ignored (0–1). */
   AI_SIMILARITY_FLOOR: z.coerce.number().min(0).max(1).default(0.25),
   AI_RETRIEVAL_TOP_K: z.coerce.number().int().min(1).max(20).default(6),
@@ -213,6 +270,16 @@ export function validateEnv(raw: Record<string, unknown>): Env {
       throw new Error(
         `Invalid environment configuration:\n${devOnly.map((m) => `  - ${m}; not allowed in production`).join('\n')}`,
       );
+  }
+  d.SWAGGER_ENABLED ??= d.NODE_ENV !== 'production';
+  if (
+    d.NODE_ENV === 'production' &&
+    d.SWAGGER_ENABLED &&
+    !(d.SWAGGER_USER && d.SWAGGER_PASSWORD)
+  ) {
+    throw new Error(
+      'Invalid environment configuration:\n  - SWAGGER_USER / SWAGGER_PASSWORD: required to enable Swagger in production',
+    );
   }
   if (d.NODE_ENV === 'production' && !d.THROTTLE_ENABLED) {
     throw new Error(

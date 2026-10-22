@@ -26,16 +26,33 @@ import {
 } from './entities/salary-structure.entity';
 import {
   annualPaye,
+  cumulativePaye,
   NigeriaPayrollCalculator,
   prorationFactor,
 } from './nigeria-payroll.calculator';
 import {
   DefaultPayrollCalculator,
   PAYROLL_CALCULATOR,
+  PayrollCalculator,
   round2,
+  wholePeriod,
 } from './payroll-calculator';
 import { PayrollService } from './payroll.service';
 import { renderPayslipPdf } from './payslip-pdf';
+
+/** One structure for the whole period. */
+const one = (
+  calc: PayrollCalculator,
+  s: SalaryStructure,
+  period: { start: string; end: string },
+  ...rest: Parameters<PayrollCalculator['calculate']> extends [
+    unknown,
+    unknown,
+    ...infer R,
+  ]
+    ? R
+    : never
+) => calc.calculate(wholePeriod(s, period), period, ...rest);
 
 const structure = (o: Partial<SalaryStructure> = {}): SalaryStructure =>
   Object.assign(new SalaryStructure(), {
@@ -88,7 +105,7 @@ const structure = (o: Partial<SalaryStructure> = {}): SalaryStructure =>
 
 describe('DefaultPayrollCalculator', () => {
   it('base + earnings = gross; deductions by fixed / % base / % gross; 2-dp rounding', () => {
-    const c = new DefaultPayrollCalculator().calculate(structure(), {
+    const c = one(new DefaultPayrollCalculator(), structure(), {
       start: '2026-10-01',
       end: '2026-10-31',
     });
@@ -106,7 +123,8 @@ describe('DefaultPayrollCalculator', () => {
   });
 
   it('rounds awkward percentages to cents', () => {
-    const c = new DefaultPayrollCalculator().calculate(
+    const c = one(
+      new DefaultPayrollCalculator(),
       structure({
         baseAmount: 333.33,
         lines: [
@@ -119,7 +137,7 @@ describe('DefaultPayrollCalculator', () => {
           },
         ],
       }),
-      { start: '', end: '' },
+      { start: '2026-10-01', end: '2026-10-31' },
     );
     expect(c.totalDeductions).toBe(25);
     expect(c.net).toBe(308.33);
@@ -175,6 +193,7 @@ describe('PayrollService', () => {
       status: PayrollRunStatus.DRAFT,
       departmentId: null,
       currency: 'NGN',
+      fxRates: {},
       totals: {},
       ...o,
     });
@@ -185,6 +204,7 @@ describe('PayrollService', () => {
       andWhere: jest.fn().mockReturnThis(),
       orderBy: jest.fn().mockReturnThis(),
       getOne: jest.fn(async () => structure()),
+      getMany: jest.fn(async () => [structure()]),
     };
     structures = {
       findOne: jest.fn(async () => null),
@@ -206,6 +226,7 @@ describe('PayrollService', () => {
       find: jest.fn(async () => []),
       update: jest.fn(),
       findOne: jest.fn(),
+      query: jest.fn(async () => []), // year-to-date totals
     };
     employeeRepo = { find: jest.fn(async () => []) };
     documents = {
@@ -300,10 +321,10 @@ describe('PayrollService', () => {
         { id: 'e2', status: EmployeeStatus.ACTIVE },
         { id: 'e3', status: EmployeeStatus.ACTIVE },
       ]);
-      qb.getOne
-        .mockResolvedValueOnce(structure())
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(structure({ currency: 'USD' }));
+      qb.getMany
+        .mockResolvedValueOnce([structure()])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([structure({ currency: 'USD' })]);
 
       const { run: result, skipped } = await service.calculate('r1');
 
@@ -311,16 +332,46 @@ describe('PayrollService', () => {
       expect(payslips.save).toHaveBeenCalledTimes(1);
       expect(skipped).toEqual([
         { employeeId: 'e2', reason: 'no salary structure' },
-        { employeeId: 'e3', reason: 'currency USD ≠ run NGN' },
+        {
+          employeeId: 'e3',
+          reason: 'no FX rate USD→NGN on this run (set fxRates)',
+        },
       ]);
       expect(result.totals).toEqual({
         employees: 1,
         gross: 1350,
         deductions: 227.5,
         net: 1122.5,
+        employerCost: 0, // simple calculator: no statutory employer costs
         skipped: 2,
       });
       expect(result.status).toBe(PayrollRunStatus.CALCULATED);
+    });
+
+    it('converts foreign-currency structures at the run rate', async () => {
+      runs.findOne.mockResolvedValue(run({ fxRates: { USD: 1000 } }));
+      employeeRepo.find.mockResolvedValue([
+        { id: 'e1', status: EmployeeStatus.ACTIVE },
+      ]);
+      qb.getMany.mockResolvedValueOnce([
+        structure({ currency: 'USD', baseAmount: 2 }),
+      ]);
+      const { skipped } = await service.calculate('r1');
+      expect(skipped).toEqual([]);
+      expect(payslips.save).toHaveBeenCalledWith(
+        expect.objectContaining({ currency: 'NGN', baseAmount: 2000 }),
+      );
+    });
+
+    it('skips people not employed in the period instead of a ₦0 payslip', async () => {
+      runs.findOne.mockResolvedValue(run());
+      employeeRepo.find.mockResolvedValue([
+        // termination recorded before the hire date
+        { id: 'e1', hireDate: '2026-10-20', terminationDate: '2026-10-05' },
+      ]);
+      const { skipped } = await service.calculate('r1');
+      expect(payslips.save).not.toHaveBeenCalled();
+      expect(skipped[0].reason).toMatch(/not employed during the period/);
     });
 
     it('approve renders PDFs into RESTRICTED payslip documents and notifies without amounts', async () => {
@@ -440,6 +491,33 @@ describe('NigeriaPayrollCalculator', () => {
       ...o,
     });
 
+  it('employer costs: 10% pension on pensionable pay, 1% NSITF on gross — not deducted', () => {
+    const c = one(calc, ngn(), october);
+    expect(c.employerCosts).toEqual([
+      expect.objectContaining({ code: 'PENSION_EMPLOYER', amount: 80_000 }),
+      expect.objectContaining({ code: 'NSITF', amount: 8_000 }),
+    ]);
+    expect(c.net).toBe(610_770); // unchanged by employer costs
+  });
+
+  it('a mid-period pay change pays each rate for its own days', () => {
+    const before = ngn();
+    const after = ngn({ baseAmount: 620_000 });
+    const c = calc.calculate(
+      [
+        { structure: before, start: '2026-10-01', end: '2026-10-15' },
+        { structure: after, start: '2026-10-16', end: '2026-10-31' },
+      ],
+      october,
+    );
+    expect(c.baseAmount).toBe(
+      round2((500_000 * 15) / 31 + (620_000 * 16) / 31),
+    );
+    expect(c.lines[0].label).toBe('Base pay (rate changed 2026-10-16)');
+    // one merged HOUSING line, not two
+    expect(c.lines.filter((l) => l.code === 'HOUSING')).toHaveLength(1);
+  });
+
   it('PAYE bands (NTA 2025): first ₦800k free, then 15/18/21/23/25%', () => {
     expect(annualPaye(800_000)).toBe(0);
     expect(annualPaye(3_000_000)).toBe(330_000);
@@ -450,7 +528,7 @@ describe('NigeriaPayrollCalculator', () => {
   });
 
   it('worked monthly payslip: pension 8% of BHT, NHF 2.5% of basic, annualised PAYE', () => {
-    const c = calc.calculate(ngn(), october);
+    const c = one(calc, ngn(), october);
     // gross 800,000; pension 64,000; NHF 12,500; taxable 723,500 × 12 = 8,682,000
     // PAYE = (330,000 + 18% × 5,682,000) / 12 = 112,730
     expect(c.gross).toBe(800_000);
@@ -464,13 +542,13 @@ describe('NigeriaPayrollCalculator', () => {
   });
 
   it('low earners pay no PAYE but still contribute pension and NHF', () => {
-    const c = calc.calculate(ngn({ baseAmount: 60_000, lines: [] }), october);
+    const c = one(calc, ngn({ baseAmount: 60_000, lines: [] }), october);
     expect(c.lines.find((l) => l.code === 'PAYE')?.amount).toBe(0);
     expect(c.net).toBe(60_000 - 4_800 - 1_500);
   });
 
   it('pro-rates a mid-month joiner (base and fixed allowances)', () => {
-    const c = calc.calculate(ngn(), october, {
+    const c = one(calc, ngn(), october, {
       hireDate: '2026-10-17', // 15 of 31 days
       terminationDate: null,
     });
@@ -492,7 +570,8 @@ describe('NigeriaPayrollCalculator', () => {
   });
 
   it("a structure's own PENSION line wins over the computed one", () => {
-    const c = calc.calculate(
+    const c = one(
+      calc,
       ngn({
         lines: [
           fixed('HOUSING', 200_000),
@@ -514,14 +593,158 @@ describe('NigeriaPayrollCalculator', () => {
   });
 
   it('a legacy TAX line counts as PAYE (no double taxation)', () => {
-    const c = calc.calculate(structure({ baseAmount: 600_000 }), october);
+    const c = one(calc, structure({ baseAmount: 600_000 }), october);
     // own PENSION 8% of base, own TAX 10% of gross; only NHF is added
     expect(c.lines.filter((l) => l.code === 'PAYE')).toHaveLength(0);
     expect(c.lines.find((l) => l.code === 'NHF')?.amount).toBe(15_000);
   });
 
   it('non-NGN structures get contractual pay only', () => {
-    const c = calc.calculate(ngn({ currency: 'USD' }), october);
+    const c = one(calc, ngn({ currency: 'USD' }), october);
     expect(c.lines.some((l) => l.code === 'PAYE')).toBe(false);
+  });
+});
+
+describe('cumulative PAYE', () => {
+  const T = 723_500; // monthly taxable from the worked payslip above
+  const steady = annualPaye(T * 12) / 12;
+
+  it('steady pay: every month is annual tax ÷ 12, with or without history', () => {
+    expect(
+      cumulativePaye({
+        taxableThisPeriod: T,
+        periodsBefore: 9,
+        periodsAfter: 2,
+        annualRelief: 0,
+      }),
+    ).toBeCloseTo(steady, 2);
+    expect(
+      cumulativePaye({
+        taxableThisPeriod: T,
+        ytd: { taxable: 9 * T, paye: 9 * steady, periods: 9 },
+        periodsBefore: 9,
+        periodsAfter: 2,
+        annualRelief: 0,
+      }),
+    ).toBeCloseTo(steady, 2);
+  });
+
+  it("a pay rise in October: the year's PAYE still totals the tax on actual income", () => {
+    const raised = 1_000_000;
+    let ytd = { taxable: 9 * T, paye: 9 * steady, periods: 9 };
+    for (const periodsAfter of [2, 1, 0]) {
+      const paye = cumulativePaye({
+        taxableThisPeriod: raised,
+        ytd,
+        periodsBefore: 9,
+        periodsAfter,
+        annualRelief: 0,
+      });
+      ytd = {
+        taxable: ytd.taxable + raised,
+        paye: ytd.paye + paye,
+        periods: ytd.periods + 1,
+      };
+    }
+    expect(ytd.paye).toBeCloseTo(annualPaye(9 * T + 3 * raised), 0);
+  });
+
+  it('never refunds through payroll after over-deduction', () => {
+    expect(
+      cumulativePaye({
+        taxableThisPeriod: 100_000,
+        ytd: { taxable: 9 * T, paye: 3 * 9 * steady, periods: 9 },
+        periodsBefore: 9,
+        periodsAfter: 2,
+        annualRelief: 0,
+      }),
+    ).toBe(0);
+  });
+
+  it('an October joiner is taxed on actual-year income, not a full-year projection', () => {
+    const joiner = cumulativePaye({
+      taxableThisPeriod: T,
+      periodsBefore: 0,
+      periodsAfter: 2,
+      annualRelief: 0,
+    });
+    expect(joiner).toBeCloseTo(annualPaye(3 * T) / 3, 2);
+    expect(joiner).toBeLessThan(steady);
+  });
+
+  it('rent relief: 20% of rent, capped at ₦500k, lowers the tax', () => {
+    const base = { taxableThisPeriod: T, periodsBefore: 0, periodsAfter: 11 };
+    const none = cumulativePaye({ ...base, annualRelief: 0 });
+    const capped = cumulativePaye({ ...base, annualRelief: 500_000 });
+    // 18% marginal band: 500k relief saves 90k a year = 7,500 a month
+    expect(round2(none - capped)).toBe(7_500);
+  });
+});
+
+describe('NigeriaPayrollCalculator reliefs', () => {
+  const calc = new NigeriaPayrollCalculator();
+  const january = { start: '2026-01-01', end: '2026-01-31' };
+  const s = (o: Partial<SalaryStructure>) =>
+    structure({
+      baseAmount: 500_000,
+      lines: [
+        {
+          code: 'HOUSING',
+          label: 'Housing',
+          type: LineType.EARNING,
+          method: LineMethod.FIXED,
+          value: 200_000,
+        },
+        {
+          code: 'TRANSPORT',
+          label: 'Transport',
+          type: LineType.EARNING,
+          method: LineMethod.FIXED,
+          value: 100_000,
+        },
+      ],
+      ...o,
+    });
+
+  it('records taxable pay and applies declared rent relief', () => {
+    const plain = one(calc, s({}), january);
+    const renter = one(calc, s({ annualRent: 3_000_000 }), january);
+    expect(plain.taxableAmount).toBe(723_500);
+    const paye = (c: typeof plain) =>
+      c.lines.find((l) => l.code === 'PAYE')!.amount;
+    expect(round2(paye(plain) - paye(renter))).toBe(7_500); // relief capped at 500k
+  });
+
+  it('NHIS / life assurance lines reduce taxable pay', () => {
+    const c = one(
+      calc,
+      s({
+        lines: [
+          {
+            code: 'HOUSING',
+            label: 'Housing',
+            type: LineType.EARNING,
+            method: LineMethod.FIXED,
+            value: 200_000,
+          },
+          {
+            code: 'TRANSPORT',
+            label: 'Transport',
+            type: LineType.EARNING,
+            method: LineMethod.FIXED,
+            value: 100_000,
+          },
+          {
+            code: 'NHIS',
+            label: 'Health insurance',
+            type: LineType.DEDUCTION,
+            method: LineMethod.FIXED,
+            value: 25_000,
+          },
+        ],
+      }),
+      january,
+    );
+    expect(c.taxableAmount).toBe(723_500 - 25_000);
   });
 });

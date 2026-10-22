@@ -15,10 +15,14 @@ import {
 } from '../documents/entities/document.entity';
 import { KnowledgeChunk } from './entities/knowledge-chunk.entity';
 import {
-  chunkText,
-  extractText,
+  ScannedDocumentError,
   UnsupportedContentError,
+  chunkText,
+  extractTextOrTranscribe,
 } from './text-extraction';
+import { DOCUMENT_READER } from '../../infrastructure/ai/document-reader.interface';
+import type { DocumentReader } from '../../infrastructure/ai/document-reader.interface';
+import { looksLikeInjection } from '../../infrastructure/ai/untrusted';
 
 export interface RetrievedChunk {
   chunkId: string;
@@ -57,6 +61,7 @@ export class KnowledgeBaseService {
     @Inject(EMBEDDINGS_PROVIDER)
     private readonly embeddings: EmbeddingsProvider,
     @Inject(STORAGE_SERVICE) private readonly storage: StorageService,
+    @Inject(DOCUMENT_READER) private readonly reader: DocumentReader,
     private readonly logger: Logger,
     config: ConfigService<Env, true>,
   ) {
@@ -100,9 +105,16 @@ export class KnowledgeBaseService {
         version.storageKey,
         version.resourceType,
       );
-      text = await extractText(bytes, version.mimeType);
+      text = await extractTextOrTranscribe(
+        bytes,
+        version.mimeType,
+        this.reader,
+      );
     } catch (err) {
-      if (err instanceof UnsupportedContentError) {
+      if (
+        err instanceof UnsupportedContentError ||
+        err instanceof ScannedDocumentError
+      ) {
         return {
           documentId,
           action: 'skipped',
@@ -113,6 +125,13 @@ export class KnowledgeBaseService {
       throw err;
     }
 
+    if (looksLikeInjection(text)) {
+      // Still indexed (excerpts are fenced as data in the prompt), but flag it.
+      this.logger.warn(
+        { documentId, title: doc.title },
+        'policy document contains text that looks like instructions to the AI — review it',
+      );
+    }
     const pieces = await chunkText(text);
     const vectors: number[][] = [];
     for (let i = 0; i < pieces.length; i += EMBED_BATCH) {

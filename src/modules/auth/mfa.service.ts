@@ -23,6 +23,7 @@ export class MfaService {
   private readonly box: SecretBox;
   private readonly requiredRoles: Set<string>;
   private readonly issuer: string;
+  private readonly window: number;
 
   constructor(
     config: ConfigService<Env, true>,
@@ -34,6 +35,7 @@ export class MfaService {
       config.get('MFA_REQUIRED_ROLES', { infer: true }),
     );
     this.issuer = config.get('APP_NAME', { infer: true });
+    this.window = config.get('MFA_TOTP_WINDOW', { infer: true });
   }
 
   /** Whether any of these roles must have MFA before using the API. */
@@ -63,18 +65,37 @@ export class MfaService {
     if (user.mfaEnabled)
       throw new BadRequestException('MFA is already enabled');
     if (!user.mfaSecret) throw new BadRequestException('Start MFA setup first');
-    const step = verifyTotp(this.box.decrypt(user.mfaSecret), code);
-    if (step === null) throw new BadRequestException('Invalid code');
+    const step = this.matchStep(user.mfaSecret, code);
+    if (step === null)
+      throw new BadRequestException(
+        "Invalid code — check the phone's clock is set automatically",
+      );
 
-    const recoveryCodes = Array.from({ length: RECOVERY_CODE_COUNT }, () =>
-      randomBytes(5)
-        .toString('hex')
-        .replace(/^(.{5})/, '$1-'),
-    );
+    const recoveryCodes = newRecoveryCodes();
     user.mfaEnabled = true;
     user.mfaLastStep = String(step);
     user.mfaRecoveryCodes = recoveryCodes.map(hashCode);
     await this.save(user);
+    return { recoveryCodes };
+  }
+
+  /**
+   * Replaces every recovery code (e.g. after using most of them). Needs a
+   * live authenticator code — a recovery code can't mint new ones.
+   */
+  async regenerateRecoveryCodes(
+    userId: string,
+    code: string,
+  ): Promise<{ recoveryCodes: string[] }> {
+    const user = await this.users.findById(userId);
+    if (!user.mfaEnabled) throw new BadRequestException('MFA is not enabled');
+    if (!/^\d{6}$/.test(code.trim()) || !(await this.verify(user, code)))
+      throw new BadRequestException(
+        'Enter a current code from your authenticator app',
+      );
+    const recoveryCodes = newRecoveryCodes();
+    user.mfaRecoveryCodes = recoveryCodes.map(hashCode);
+    await this.users.save(user);
     return { recoveryCodes };
   }
 
@@ -103,7 +124,7 @@ export class MfaService {
     const normalised = code.replace(/\s/g, '').toLowerCase();
 
     if (/^\d{6}$/.test(normalised)) {
-      const step = verifyTotp(this.box.decrypt(user.mfaSecret), normalised);
+      const step = this.matchStep(user.mfaSecret, normalised);
       if (step === null || step <= Number(user.mfaLastStep ?? -1)) return false;
       user.mfaLastStep = String(step);
       await this.users.save(user);
@@ -115,6 +136,15 @@ export class MfaService {
     user.mfaRecoveryCodes = user.mfaRecoveryCodes.filter((h) => h !== hashed);
     await this.users.save(user);
     return true;
+  }
+
+  private matchStep(sealedSecret: string, code: string): number | null {
+    return verifyTotp(
+      this.box.decrypt(sealedSecret),
+      code,
+      Date.now(),
+      this.window,
+    );
   }
 
   private async clear(user: User): Promise<void> {
@@ -129,6 +159,14 @@ export class MfaService {
     await this.users.save(user);
     await this.rbac.invalidateAuthUser(user.id); // guard reads mfaEnabled
   }
+}
+
+function newRecoveryCodes(): string[] {
+  return Array.from({ length: RECOVERY_CODE_COUNT }, () =>
+    randomBytes(5)
+      .toString('hex')
+      .replace(/^(.{5})/, '$1-'),
+  );
 }
 
 function hashCode(code: string): string {

@@ -20,6 +20,8 @@ export const PERMISSIONS = {
   NOTIFICATION_SEND_TEST: 'notification:send_test',
   /** Read the audit trail. Admin only. */
   AUDIT_READ: 'audit:read',
+  /** Data-subject exports, applicant erasure, retention runs (NDPA). */
+  PRIVACY_MANAGE: 'privacy:manage',
 
   // ── Employees / org (stage 2) ─────────────────────────────────────────
   EMPLOYEE_READ_SELF: 'employee:read_self',
@@ -139,6 +141,7 @@ const HR_MANAGER_PERMISSIONS: Permission[] = [
   P.PAYROLL_MANAGE,
   P.AI_MANAGE_KNOWLEDGE_BASE,
   P.AI_READ_USAGE,
+  P.PRIVACY_MANAGE,
   P.RECRUITING_READ,
 ];
 

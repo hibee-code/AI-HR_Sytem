@@ -29,6 +29,7 @@ export interface TemplateData {
   USER_INVITED: { firstName: string; inviteUrl: string; expiresAt: string };
   PASSWORD_RESET: { firstName: string; resetUrl: string; expiresAt: string };
   PASSWORD_CHANGED: { firstName: string };
+  ACCOUNT_LOCKED: { firstName: string; lockedUntil: string; resetUrl: string };
   EMPLOYEE_WELCOME: {
     firstName: string;
     startDate: string;
@@ -188,6 +189,25 @@ export const TEMPLATES: { [K in TemplateName]: TemplateDef<TemplateData[K]> } =
               'Your password was just changed and all other sessions were signed out.',
             ) +
             p("<strong>If this wasn't you, contact HR immediately.</strong>"),
+        ),
+      }),
+    },
+
+    ACCOUNT_LOCKED: {
+      defaultChannels: [NotificationChannel.EMAIL],
+      email: (d, ctx) => ({
+        subject: `Your ${ctx.appName} account was temporarily locked`,
+        text: `Hi ${d.firstName},\n\nAfter several failed sign-in attempts your account is locked until ${fmtDate(d.lockedUntil)}. If this wasn't you, reset your password now: ${d.resetUrl}\n\nAn administrator can also unlock it.`,
+        html: layout(
+          ctx,
+          'Account temporarily locked',
+          p(`Hi ${esc(d.firstName)},`) +
+            p(
+              `After several failed sign-in attempts your account is locked until <strong>${esc(fmtDate(d.lockedUntil))}</strong>.`,
+            ) +
+            p("If this wasn't you, reset your password now:") +
+            button(d.resetUrl, 'Reset password') +
+            p('<small>An administrator can also unlock the account.</small>'),
         ),
       }),
     },

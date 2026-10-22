@@ -9,6 +9,7 @@ import type { Env } from './config/env.schema';
 import { DatabaseModule } from './database/database.module';
 import { LoggerModule } from './infrastructure/logger/logger.module';
 import { RedisThrottlerStorage } from './infrastructure/redis/redis-throttler.storage';
+import { throttleTracker } from './infrastructure/redis/throttle-tracker';
 import { RedisModule } from './infrastructure/redis/redis.module';
 import { AiModule } from './modules/ai/ai.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
@@ -22,6 +23,7 @@ import { LeaveModule } from './modules/leave/leave.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { OnboardingModule } from './modules/onboarding/onboarding.module';
 import { PayrollModule } from './modules/payroll/payroll.module';
+import { PrivacyModule } from './modules/privacy/privacy.module';
 import { PerformanceModule } from './modules/performance/performance.module';
 import { RecruitingModule } from './modules/recruiting/recruiting.module';
 import { PermissionsGuard } from './modules/rbac/guards/permissions.guard';
@@ -51,6 +53,9 @@ import { UsersModule } from './modules/users/users.module';
         ],
         // Redis-backed so limits hold across multiple app instances.
         storage,
+        getTracker: throttleTracker(
+          config.get('JWT_ACCESS_SECRET', { infer: true }),
+        ),
         skipIf: () => !config.get('THROTTLE_ENABLED', { infer: true }),
       }),
     }),
@@ -71,6 +76,7 @@ import { UsersModule } from './modules/users/users.module';
     PayrollModule,
     AiModule,
     RecruitingModule,
+    PrivacyModule,
   ],
   providers: [
     // Global guards run in this order: rate limit → authenticate → authorise.

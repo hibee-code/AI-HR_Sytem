@@ -41,6 +41,8 @@ export interface ScreeningResult {
   model: string;
   screenedAt: string;
   usage?: { inputTokens: number; outputTokens: number };
+  /** The résumé contains text that looks like instructions to the AI — review by hand. */
+  injectionSuspected?: boolean;
 }
 
 @Entity({ name: 'applications' })

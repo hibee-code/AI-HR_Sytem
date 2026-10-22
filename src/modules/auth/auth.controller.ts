@@ -4,11 +4,9 @@ import {
   Get,
   HttpCode,
   HttpStatus,
-  Ip,
   Param,
   ParseUUIDPipe,
   Post,
-  Headers,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -19,6 +17,8 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import { instanceToPlain } from 'class-transformer';
 import type { AuthUser } from '../../common/auth/auth-user.interface';
+import { Client } from '../../common/decorators/client-info.decorator';
+import type { ClientInfo } from '../../common/decorators/client-info.decorator';
 import { AllowWithoutMfa } from '../../common/decorators/allow-without-mfa.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
@@ -41,7 +41,7 @@ import {
   TokenPairResponse,
 } from './dto/auth.dto';
 import { MfaService } from './mfa.service';
-import type { ClientMeta, IssuedTokens } from './token.service';
+import type { IssuedTokens } from './token.service';
 import { Audit } from '../audit/audit.decorator';
 
 /** Tighter limit for credential-guessing surfaces: 5 attempts / minute / IP. */
@@ -64,13 +64,9 @@ export class AuthController {
       'Email + password → token pair, or an MFA challenge (mfaRequired: true)',
   })
   @ApiOkResponse({ type: LoginResponse })
-  async login(
-    @Body() dto: LoginDto,
-    @Ip() ip: string,
-    @Headers('user-agent') ua?: string,
-  ) {
+  async login(@Body() dto: LoginDto, @Client() client: ClientInfo) {
     return toLoginResponse(
-      await this.auth.login(dto.email, dto.password, meta(ip, ua)),
+      await this.auth.login(dto.email, dto.password, client),
     );
   }
 
@@ -84,13 +80,9 @@ export class AuthController {
     summary: 'Finish an MFA login with a TOTP or recovery code',
   })
   @ApiOkResponse({ type: LoginResponse })
-  async verifyMfa(
-    @Body() dto: MfaVerifyDto,
-    @Ip() ip: string,
-    @Headers('user-agent') ua?: string,
-  ) {
+  async verifyMfa(@Body() dto: MfaVerifyDto, @Client() client: ClientInfo) {
     return toLoginResponse(
-      await this.auth.verifyMfa(dto.mfaToken, dto.code, meta(ip, ua)),
+      await this.auth.verifyMfa(dto.mfaToken, dto.code, client),
     );
   }
 
@@ -119,6 +111,22 @@ export class AuthController {
   }
 
   @ApiBearerAuth('access-token')
+  @Audit('auth.mfa.recovery_codes', 'user')
+  @Post('mfa/recovery-codes')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Replace all recovery codes (needs a current authenticator code); returns the new set once',
+  })
+  @ApiOkResponse({ type: MfaEnabledResponse })
+  regenerateRecoveryCodes(
+    @CurrentUser('id') userId: string,
+    @Body() dto: MfaCodeDto,
+  ) {
+    return this.mfa.regenerateRecoveryCodes(userId, dto.code);
+  }
+
+  @ApiBearerAuth('access-token')
   @Audit('auth.mfa.disable', 'user')
   @Post('mfa/disable')
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -136,12 +144,8 @@ export class AuthController {
     summary: 'Rotate a refresh token; the old one is invalidated',
   })
   @ApiOkResponse({ type: TokenPairResponse })
-  async refresh(
-    @Body() dto: RefreshTokenDto,
-    @Ip() ip: string,
-    @Headers('user-agent') ua?: string,
-  ) {
-    return toResponse(await this.auth.refresh(dto.refreshToken, meta(ip, ua)));
+  async refresh(@Body() dto: RefreshTokenDto, @Client() client: ClientInfo) {
+    return toResponse(await this.auth.refresh(dto.refreshToken, client));
   }
 
   @Public()
@@ -174,6 +178,10 @@ export class AuthController {
       ...instanceToPlain(profile),
       permissions: user.permissions,
       mfaSetupRequired: !user.mfaEnabled && this.mfa.isRequiredFor(user.roles),
+      // Prompt to regenerate before they run out (0 + lost phone = admin reset).
+      mfaRecoveryCodesRemaining: profile.mfaEnabled
+        ? profile.mfaRecoveryCodes.length
+        : null,
     };
   }
 
@@ -207,11 +215,10 @@ export class AuthController {
   @ApiOkResponse({ type: TokenPairResponse })
   async acceptInvite(
     @Body() dto: AcceptInviteDto,
-    @Ip() ip: string,
-    @Headers('user-agent') ua?: string,
+    @Client() client: ClientInfo,
   ) {
     return toResponse(
-      await this.auth.acceptInvite(dto.token, dto.password, meta(ip, ua)),
+      await this.auth.acceptInvite(dto.token, dto.password, client),
     );
   }
 
@@ -235,8 +242,8 @@ export class AuthController {
   @ApiOperation({
     summary: 'Set a new password with a reset token; all sessions are revoked',
   })
-  resetPassword(@Body() dto: ResetPasswordDto) {
-    return this.auth.resetPassword(dto.token, dto.password);
+  resetPassword(@Body() dto: ResetPasswordDto, @Client() client: ClientInfo) {
+    return this.auth.resetPassword(dto.token, dto.password, dto.code, client);
   }
 
   @ApiBearerAuth('access-token')
@@ -257,10 +264,6 @@ export class AuthController {
       dto.newPassword,
     );
   }
-}
-
-function meta(ip: string, ua?: string): ClientMeta {
-  return { ipAddress: ip, userAgent: ua };
 }
 
 function toResponse(t: IssuedTokens): TokenPairResponse {

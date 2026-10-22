@@ -39,6 +39,9 @@ import {
 import { RecruitingProcessor } from './recruiting.processor';
 import { RecruitingService } from './recruiting.service';
 import { Audit } from '../audit/audit.decorator';
+import { Application } from './entities/application.entity';
+import { JobOpening } from './entities/job-opening.entity';
+import { ApiPaginatedResponse } from '../../common/decorators/api-paginated-response.decorator';
 
 @ApiTags('recruiting')
 @ApiBearerAuth('access-token')
@@ -53,6 +56,7 @@ export class RecruitingController {
 
   @Get('openings')
   @RequirePermissions(PERMISSIONS.RECRUITING_READ)
+  @ApiPaginatedResponse(JobOpening)
   listOpenings(@Query() query: ListOpeningsQueryDto) {
     return this.recruiting.listOpenings(query);
   }
@@ -128,6 +132,7 @@ export class RecruitingController {
     summary:
       'Ranked pipeline (fitScore desc by default); scores are AI-assisted and advisory',
   })
+  @ApiPaginatedResponse(Application)
   listApplications(
     @Param('id', ParseUUIDPipe) openingId: string,
     @Query() query: ListApplicationsQueryDto,

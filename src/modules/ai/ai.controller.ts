@@ -36,6 +36,8 @@ import {
   UsageQueryDto,
 } from './dto/ai.dto';
 import { KnowledgeBaseService } from './knowledge-base.service';
+import { AiConversation } from './entities/ai-conversation.entity';
+import { ApiPaginatedResponse } from '../../common/decorators/api-paginated-response.decorator';
 
 @ApiTags('ai')
 @ApiBearerAuth('access-token')
@@ -89,10 +91,14 @@ export class AiController {
       'X-Accel-Buffering': 'no', // disable proxy buffering (nginx)
     });
     res.flushHeaders();
+    // Tab closed / network dropped: leaving the loop cancels generation.
+    let gone = false;
+    res.on('close', () => (gone = !res.writableFinished));
     for await (const { type, ...data } of events) {
+      if (gone) break;
       res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
     }
-    res.end();
+    if (!gone) res.end();
   }
 
   @Get('usage/me')
@@ -117,6 +123,7 @@ export class AiController {
 
   @Get('assistant/conversations')
   @RequirePermissions(PERMISSIONS.AI_CHAT)
+  @ApiPaginatedResponse(AiConversation)
   conversations(
     @Query() query: PaginationQueryDto,
     @CurrentUser('id') userId: string,

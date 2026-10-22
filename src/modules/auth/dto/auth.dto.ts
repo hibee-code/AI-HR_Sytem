@@ -1,6 +1,7 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsEmail,
+  IsOptional,
   IsString,
   Matches,
   MaxLength,
@@ -46,7 +47,7 @@ export class ForgotPasswordDto {
   email: string;
 }
 
-export class ResetPasswordDto {
+class TokenPasswordDto {
   @ApiProperty()
   @IsString()
   @MaxLength(256)
@@ -57,7 +58,20 @@ export class ResetPasswordDto {
   password: string;
 }
 
-export class AcceptInviteDto extends ResetPasswordDto {}
+export class AcceptInviteDto extends TokenPasswordDto {}
+
+export class ResetPasswordDto extends TokenPasswordDto {
+  @ApiPropertyOptional({
+    example: '123456',
+    description:
+      'Required when the account has MFA: an authenticator or recovery code',
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(6)
+  @MaxLength(20)
+  code?: string;
+}
 
 export class ChangePasswordDto {
   @ApiProperty()

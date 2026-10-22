@@ -43,15 +43,34 @@ export class HealthController {
     ]);
   }
 
+  /**
+   * Reachable, and not close to `maxmemory`: with `noeviction` a full Redis
+   * rejects writes and every queue stalls, so warn at 90%.
+   */
   private async redisCheck(key: string): Promise<HealthIndicatorResult> {
     const check = this.indicator.check(key);
     try {
       const pong = await this.redis.ping();
-      return pong === 'PONG'
-        ? check.up()
-        : check.down({ message: `unexpected reply: ${String(pong)}` });
+      if (pong !== 'PONG')
+        return check.down({ message: `unexpected reply: ${String(pong)}` });
+      const memory = redisMemory(await this.redis.info('memory'));
+      if (memory.max > 0 && memory.used / memory.max > REDIS_MEMORY_LIMIT)
+        return check.down({
+          message: 'memory above 90% of maxmemory',
+          ...memory,
+        });
+      return check.up(memory);
     } catch (err) {
       return check.down({ message: (err as Error).message });
     }
   }
+}
+
+const REDIS_MEMORY_LIMIT = 0.9;
+
+/** used / maxmemory in bytes from `INFO memory` (max 0 = no limit set). */
+export function redisMemory(info: string): { used: number; max: number } {
+  const field = (name: string) =>
+    Number(new RegExp(`^${name}:(\\d+)`, 'm').exec(info)?.[1] ?? 0);
+  return { used: field('used_memory'), max: field('maxmemory') };
 }

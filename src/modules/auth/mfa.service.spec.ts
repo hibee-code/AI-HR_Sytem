@@ -8,6 +8,8 @@ import { MfaService } from './mfa.service';
 describe('MfaService', () => {
   let user: User;
   let service: MfaService;
+  let env: Record<string, unknown>;
+  let users: { findById: jest.Mock; save: jest.Mock };
   const rbac = { invalidateAuthUser: jest.fn() };
 
   beforeEach(() => {
@@ -21,11 +23,11 @@ describe('MfaService', () => {
       mfaLastStep: null,
       mfaRecoveryCodes: [],
     });
-    const users = {
+    users = {
       findById: jest.fn(async () => user),
       save: jest.fn(async (u: User) => u),
     };
-    const env: Record<string, unknown> = {
+    env = {
       MFA_ENCRYPTION_KEY: 'k'.repeat(32),
       MFA_REQUIRED_ROLES: ['ADMIN'],
       APP_NAME: 'HR System',
@@ -99,5 +101,33 @@ describe('MfaService', () => {
       mfaSecret: null,
       mfaRecoveryCodes: [],
     });
+  });
+
+  it('regenerates recovery codes only with a live authenticator code', async () => {
+    const { secret, recoveryCodes } = await enrol();
+    await service.verify(user, recoveryCodes[0]); // 9 left
+    await expect(
+      service.regenerateRecoveryCodes('u1', recoveryCodes[1]),
+    ).rejects.toThrow(/authenticator/);
+    const fresh = await service.regenerateRecoveryCodes(
+      'u1',
+      totpCode(secret, totpStep() + 1),
+    );
+    expect(fresh.recoveryCodes).toHaveLength(10);
+    expect(user.mfaRecoveryCodes).toHaveLength(10);
+    await expect(service.verify(user, recoveryCodes[2])).resolves.toBe(false); // old set gone
+  });
+
+  it('MFA_TOTP_WINDOW widens the accepted clock drift', async () => {
+    const { secret } = await enrol();
+    const twoStepsAhead = totpCode(secret, totpStep() + 2); // phone ~60 s fast
+    await expect(service.verify(user, twoStepsAhead)).resolves.toBe(false);
+    env.MFA_TOTP_WINDOW = 2;
+    const tolerant = new MfaService(
+      { get: (k: string) => env[k] } as unknown as ConfigService<never, true>,
+      users as unknown as UsersService,
+      rbac as unknown as RbacService,
+    );
+    await expect(tolerant.verify(user, twoStepsAhead)).resolves.toBe(true);
   });
 });

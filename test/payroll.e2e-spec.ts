@@ -261,4 +261,30 @@ describe('Payroll (e2e)', () => {
       })
       .expect(400);
   });
+
+  it('stores taxable pay and feeds it into the next run (year-to-date PAYE)', async () => {
+    const [oct] = await ds.query(
+      `SELECT taxable_amount FROM payslips WHERE run_id = $1`,
+      [runId],
+    );
+    // gross 720,000 − own pension 48,000 − NHF 15,000
+    expect(Number(oct.taxable_amount)).toBe(657000);
+
+    const nov = (
+      await http()
+        .post(`${BASE}/payroll/runs`)
+        .set(auth(admin))
+        .send({
+          periodStart: '2026-11-01',
+          periodEnd: '2026-11-30',
+          payDate: '2026-11-27',
+        })
+        .expect(201)
+    ).body;
+    const calc = await http()
+      .post(`${BASE}/payroll/runs/${nov.id}/calculate`)
+      .set(auth(admin))
+      .expect(201);
+    expect(calc.body.run.totals).toMatchObject({ employees: 1, net: 585000 });
+  });
 });

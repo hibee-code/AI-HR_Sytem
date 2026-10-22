@@ -21,6 +21,8 @@ import {
 } from './dto/user.dto';
 import { Audit } from '../audit/audit.decorator';
 import { UsersService } from './users.service';
+import { User } from './entities/user.entity';
+import { ApiPaginatedResponse } from '../../common/decorators/api-paginated-response.decorator';
 
 /**
  * Admin-side user management. Inviting lives in AuthController
@@ -35,6 +37,7 @@ export class UsersController {
   @Get()
   @RequirePermissions(PERMISSIONS.USER_READ)
   @ApiOperation({ summary: 'List users (paginated, filterable)' })
+  @ApiPaginatedResponse(User)
   list(@Query() query: ListUsersQueryDto) {
     return this.users.list(query);
   }

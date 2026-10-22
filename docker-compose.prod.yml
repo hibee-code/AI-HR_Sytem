@@ -41,12 +41,9 @@ services:
       REDIS_PORT: 6379
     expose:
       - '3000'
-    # Schema first, then the permission catalogue (new permissions reach the
-    # system roles), then the API. A failed migration stops the deploy.
-    command: >-
-      sh -c "npm run migration:run:prod &&
-             node dist/database/seeds/run-seed.js --catalogue-only &&
-             exec node dist/main"
+    # Migrations + permission catalogue under an advisory lock (safe with
+    # several replicas), then the API. A failed migration stops the deploy.
+    command: sh -c "node dist/database/migrate.js && exec node dist/main"
     depends_on:
       postgres:
         condition: service_healthy
@@ -60,9 +57,9 @@ services:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${DB_USERNAME:?set DB_USERNAME}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME:?set DB_NAME}
+      POSTGRES_USER: ${DB_USERNAME:?set DB_USERNAME in .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      POSTGRES_DB: ${DB_NAME:?set DB_NAME in .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
@@ -76,23 +73,43 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     # AOF so queued jobs survive restarts; noeviction because BullMQ must not lose keys.
+    # The password reaches Redis via the environment, never the command line.
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    # maxmemory keeps Redis from exhausting the VPS; /health/ready reports
+    # down above 90% of it, before writes would start failing.
     command:
-      - redis-server
-      - --requirepass
-      - ${REDIS_PASSWORD:?set REDIS_PASSWORD}
-      - --appendonly
-      - 'yes'
-      - --maxmemory-policy
-      - noeviction
+      ['sh', '/usr/local/bin/redis.sh', '--appendonly', 'yes', '--maxmemory', '${REDIS_MAXMEMORY:-256mb}', '--maxmemory-policy', 'noeviction']
     volumes:
       - redis_data:/data
+      - ./docker/redis/redis.sh:/usr/local/bin/redis.sh:ro
     healthcheck:
-      test: ['CMD-SHELL', 'redis-cli -a "$$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG']
+      test: ['CMD', 'sh', '/usr/local/bin/redis.sh', '--health']
       interval: 5s
       timeout: 3s
       retries: 20
+
+  # Daily pg_dump to ./backups (verified, pruned after BACKUP_KEEP_DAYS).
+  # Copy off the server with BACKUP_UPLOAD_CMD — a backup on the same disk
+  # doesn't survive losing that disk. Restore: scripts/db-restore.sh.
+  backup:
+    image: pgvector/pgvector:pg16 # same major version as the database
+    restart: unless-stopped
+    entrypoint: ['sh', '/usr/local/bin/backup.sh']
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      PGHOST: postgres
+      PGUSER: ${DB_USERNAME:?set DB_USERNAME in .env}
+      PGPASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      PGDATABASE: ${DB_NAME:?set DB_NAME in .env}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      BACKUP_HOUR_UTC: ${BACKUP_HOUR_UTC:-2}
+      BACKUP_UPLOAD_CMD: ${BACKUP_UPLOAD_CMD:-}
+    volumes:
+      - ./backups:/backups
+      - ./docker/backup/backup.sh:/usr/local/bin/backup.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   caddy_data:

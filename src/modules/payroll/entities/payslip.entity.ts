@@ -60,6 +60,16 @@ export class Payslip extends BaseEntity {
   totalDeductions: number;
   @ApiProperty() @Column({ ...money }) net: number;
 
+  /** Employer-side costs (not deducted): employer pension, NSITF. */
+  @ApiProperty({ type: 'array', items: { type: 'object' } })
+  @Column({ name: 'employer_costs', type: 'jsonb', default: () => `'[]'` })
+  employerCosts: { code: string; label: string; amount: number }[];
+
+  /** Taxable pay this period; summed per tax year for cumulative PAYE. */
+  @ApiProperty({ nullable: true })
+  @Column({ name: 'taxable_amount', ...money, nullable: true })
+  taxableAmount: number | null;
+
   @ApiProperty({ type: 'array', items: { type: 'object' } })
   @Column({ type: 'jsonb', default: () => `'[]'` })
   lines: PayslipLine[];

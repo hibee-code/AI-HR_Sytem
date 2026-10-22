@@ -10,6 +10,10 @@ import { FakeEmbeddingsProvider } from '../../infrastructure/ai/fake-embeddings.
 import { MemoryStorageService } from '../../infrastructure/storage/memory-storage.service';
 import { STORAGE_SERVICE } from '../../infrastructure/storage/storage.interface';
 import { AiUsageService } from '../ai/ai-usage.service';
+import {
+  DOCUMENT_READER,
+  NO_DOCUMENT_READER,
+} from '../../infrastructure/ai/document-reader.interface';
 import { DocumentsService } from '../documents/documents.service';
 import {
   DocumentCategory,
@@ -68,6 +72,7 @@ describe('screener helpers', () => {
         ],
         resumeText:
           'Senior engineer. Ten years with PostgreSQL and Node services deployed on Kubernetes.',
+        redactNames: null,
       },
       new FakeEmbeddingsProvider(64),
       new FakeChatAdapter(),
@@ -161,8 +166,14 @@ describe('RecruitingService', () => {
         { provide: STORAGE_SERVICE, useValue: storage },
         { provide: DocumentsService, useValue: documents },
         { provide: AiUsageService, useValue: { record: jest.fn() } },
+        { provide: DOCUMENT_READER, useValue: NO_DOCUMENT_READER },
         { provide: Logger, useValue: { warn: jest.fn() } },
-        { provide: ConfigService, useValue: { get: () => 1024 } },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: (k: string) => (k === 'AI_REDACT_PII' ? true : 1024),
+          },
+        },
       ],
     }).compile();
     service = moduleRef.get(RecruitingService);
@@ -252,6 +263,7 @@ describe('RecruitingService', () => {
           Object.assign(new Application(), {
             id: 'app-1',
             opening: opening(),
+            candidate: { firstName: 'Ada', lastName: 'Lovelace' },
             resumeDocument: {
               currentVersion: {
                 storageKey: stored.key,
@@ -295,6 +307,7 @@ describe('RecruitingService', () => {
         Object.assign(new Application(), {
           id: 'app-1',
           opening: opening(),
+          candidate: { firstName: 'Ada', lastName: 'Lovelace' },
           resumeDocument: {
             currentVersion: {
               storageKey: stored.key,
@@ -304,14 +317,12 @@ describe('RecruitingService', () => {
           },
         }),
       );
-      await expect(service.screen('app-1')).rejects.toThrow(
-        /could not be extracted/,
-      );
+      await expect(service.screen('app-1')).rejects.toThrow(/too little text/);
       expect(applications.update).toHaveBeenLastCalledWith(
         'app-1',
         expect.objectContaining({
           screeningStatus: ScreeningStatus.FAILED,
-          screeningError: expect.stringContaining('extracted'),
+          screeningError: expect.stringContaining('too little text'),
         }),
       );
     });

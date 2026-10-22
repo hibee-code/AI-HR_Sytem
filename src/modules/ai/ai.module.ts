@@ -6,6 +6,7 @@ import { QUEUES } from '../../infrastructure/queue/queue.constants';
 import { QueueModule } from '../../infrastructure/queue/queue.module';
 import { StorageModule } from '../../infrastructure/storage/storage.module';
 import { Document } from '../documents/entities/document.entity';
+import { RbacModule } from '../rbac/rbac.module';
 import { AiUsageService } from './ai-usage.service';
 import { AiController } from './ai.controller';
 import { AiListener } from './ai.listener';
@@ -30,6 +31,7 @@ import { KnowledgeBaseService } from './knowledge-base.service';
     BullModule.registerQueue({ name: QUEUES.AI }),
     AiInfrastructureModule,
     StorageModule,
+    RbacModule,
   ],
   controllers: [AiController],
   providers: [

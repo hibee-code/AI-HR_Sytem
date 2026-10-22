@@ -85,7 +85,12 @@ describe('AnthropicChatAdapter', () => {
       text: 'You get 20 days [1].',
       provider: 'anthropic',
       model: 'claude-haiku-5-5',
-      usage: { inputTokens: 120, outputTokens: 40 },
+      usage: {
+        inputTokens: 120,
+        outputTokens: 40,
+        cacheReadTokens: 20,
+        cacheWriteTokens: 0,
+      },
     });
   });
 

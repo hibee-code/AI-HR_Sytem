@@ -222,6 +222,17 @@ export class TokenService {
     return { raw, expiresAt };
   }
 
+  /** Validates a one-time token without burning it (e.g. to ask for MFA first). */
+  async peekOneTime(raw: string, type: OneTimeTokenType): Promise<string> {
+    const token = await this.oneTimeTokens.findOne({
+      where: { tokenHash: hash(raw), type },
+    });
+    if (!token || !token.isUsable) {
+      throw new UnauthorizedException('Token is invalid or has expired');
+    }
+    return token.userId;
+  }
+
   /** Validates and burns a one-time token, returning its owner id. */
   async consumeOneTime(raw: string, type: OneTimeTokenType): Promise<string> {
     const token = await this.oneTimeTokens.findOne({

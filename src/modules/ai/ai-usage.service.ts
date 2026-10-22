@@ -6,6 +6,7 @@ import { MoreThanOrEqual, Repository } from 'typeorm';
 import type { Env } from '../../config/env.schema';
 import type { ChatResponse } from '../../infrastructure/ai/chat-model.interface';
 import { estimateCostUsd } from '../../infrastructure/ai/pricing';
+import { RbacService } from '../rbac/rbac.service';
 import { AiFeature, AiUsage } from './entities/ai-usage.entity';
 
 export interface UsageSummaryRow {
@@ -23,19 +24,35 @@ export interface UsageSummaryRow {
 @Injectable()
 export class AiUsageService {
   private readonly dailyLimit: number;
+  private readonly roleLimits: Record<string, number>;
 
   constructor(
     @InjectRepository(AiUsage) private readonly usage: Repository<AiUsage>,
+    private readonly rbac: RbacService,
     private readonly logger: Logger,
     config: ConfigService<Env, true>,
   ) {
     this.dailyLimit = config.get('AI_DAILY_MESSAGE_LIMIT', { infer: true });
+    this.roleLimits = config.get('AI_DAILY_LIMIT_OVERRIDES', { infer: true });
+  }
+
+  /**
+   * The user's cap: the most generous of their roles' overrides (0 =
+   * unlimited wins), else the default.
+   */
+  async limitFor(userId: string): Promise<number> {
+    const roles = (await this.rbac.getAuthUser(userId))?.roles ?? [];
+    const overrides = roles
+      .map((r) => this.roleLimits[r])
+      .filter((v): v is number => v !== undefined);
+    if (overrides.length === 0) return this.dailyLimit;
+    return overrides.includes(0) ? 0 : Math.max(...overrides);
   }
 
   /** Never throws — accounting must not fail the answer the user already got. */
   async record(
     res: Pick<ChatResponse, 'provider' | 'model' | 'usage'>,
-    ctx: { feature: AiFeature; userId: string | null },
+    ctx: { feature: AiFeature; userId: string | null; aborted?: boolean },
   ): Promise<void> {
     const costUsd = estimateCostUsd(res.model, res.usage);
     const row = {
@@ -45,6 +62,9 @@ export class AiUsageService {
       model: res.model.slice(0, 100),
       inputTokens: res.usage?.inputTokens ?? 0,
       outputTokens: res.usage?.outputTokens ?? 0,
+      cacheReadTokens: res.usage?.cacheReadTokens ?? 0,
+      cacheWriteTokens: res.usage?.cacheWriteTokens ?? 0,
+      aborted: ctx.aborted ?? false,
       costUsd,
     };
     this.logger.log({ ...row }, 'ai call');
@@ -60,19 +80,22 @@ export class AiUsageService {
 
   /** Model calls the user has made today (UTC) and the cap (0 = unlimited). */
   async today(userId: string): Promise<{ used: number; limit: number }> {
-    const used = await this.usage.count({
-      where: {
-        userId,
-        feature: AiFeature.ASSISTANT,
-        createdAt: MoreThanOrEqual(startOfUtcDay()),
-      },
-    });
-    return { used, limit: this.dailyLimit };
+    const [used, limit] = await Promise.all([
+      this.usage.count({
+        where: {
+          userId,
+          feature: AiFeature.ASSISTANT,
+          createdAt: MoreThanOrEqual(startOfUtcDay()),
+        },
+      }),
+      this.limitFor(userId),
+    ]);
+    return { used, limit };
   }
 
   async assertWithinDailyLimit(userId: string): Promise<void> {
-    if (this.dailyLimit === 0) return;
     const { used, limit } = await this.today(userId);
+    if (limit === 0) return;
     if (used >= limit) {
       throw new HttpException(
         {
