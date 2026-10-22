@@ -14,14 +14,21 @@ export interface PayslipComputation {
   lines: PayslipLine[];
 }
 
+/** Employment dates within which pay is due (for pro-rating). */
+export interface Employment {
+  hireDate: string;
+  terminationDate: string | null;
+}
+
 /**
- * Pluggable pay computation. Bind a different implementation to
- * PAYROLL_CALCULATOR to apply real tax tables, statutory contributions, etc.
+ * Pluggable pay computation, selected by PAYROLL_CALCULATOR:
+ * `nigeria` (statutory deductions) or `simple` (contractual lines only).
  */
 export interface PayrollCalculator {
   calculate(
     structure: SalaryStructure,
     period: { start: string; end: string },
+    employment?: Employment,
   ): PayslipComputation;
 }
 

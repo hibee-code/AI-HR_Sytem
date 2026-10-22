@@ -38,6 +38,7 @@ import {
 } from './dto/recruiting.dto';
 import { RecruitingProcessor } from './recruiting.processor';
 import { RecruitingService } from './recruiting.service';
+import { Audit } from '../audit/audit.decorator';
 
 @ApiTags('recruiting')
 @ApiBearerAuth('access-token')
@@ -140,6 +141,7 @@ export class RecruitingController {
     return this.recruiting.findApplication(id);
   }
 
+  @Audit('recruiting.resume.download', 'application')
   @Get('applications/:id/resume')
   @RequirePermissions(PERMISSIONS.RECRUITING_READ)
   @ApiOperation({ summary: 'Signed download link for the résumé' })
@@ -149,6 +151,9 @@ export class RecruitingController {
     );
   }
 
+  @Audit('recruiting.application.status', 'application', {
+    bodyKeys: ['status'],
+  })
   @Put('applications/:id/status')
   @RequirePermissions(PERMISSIONS.RECRUITING_MANAGE)
   @ApiOperation({

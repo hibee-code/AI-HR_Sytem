@@ -1,21 +1,25 @@
 import {
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 import type { AuthUser } from '../../../common/auth/auth-user.interface';
+import { ALLOW_WITHOUT_MFA_KEY } from '../../../common/decorators/allow-without-mfa.decorator';
 import { IS_PUBLIC_KEY } from '../../../common/decorators/public.decorator';
 import { UserStatus } from '../../users/entities/user.entity';
 import { RbacService } from '../../rbac/rbac.service';
+import { MfaService } from '../mfa.service';
 import { TokenService } from '../token.service';
 
 /**
  * Global guard. Every route requires a valid Bearer access token unless it
  * (or its controller) is marked @Public(). On success, attaches `req.user`
- * (an AuthUser) for PermissionsGuard and @CurrentUser().
+ * (an AuthUser) for PermissionsGuard and @CurrentUser(). Users whose role
+ * mandates MFA but who haven't enrolled only reach @AllowWithoutMfa() routes.
  */
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -23,6 +27,7 @@ export class JwtAuthGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly tokens: TokenService,
     private readonly rbac: RbacService,
+    private readonly mfa: MfaService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -58,6 +63,21 @@ export class JwtAuthGuard implements CanActivate {
       payload.iat < user.passwordChangedAt
     ) {
       throw new UnauthorizedException('Token issued before password change');
+    }
+
+    if (
+      !user.mfaEnabled &&
+      this.mfa.isRequiredFor(user.roles) &&
+      !this.reflector.getAllAndOverride<boolean>(ALLOW_WITHOUT_MFA_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ])
+    ) {
+      throw new ForbiddenException({
+        error: 'MFA_SETUP_REQUIRED',
+        message:
+          'Your role requires two-factor authentication. Set it up via POST /auth/mfa/setup.',
+      });
     }
 
     req.user = user;

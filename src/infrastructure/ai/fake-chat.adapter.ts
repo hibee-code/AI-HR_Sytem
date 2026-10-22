@@ -26,8 +26,18 @@ export class FakeChatAdapter implements ChatModel {
       text: `Based on the company policy [${firstSource}], here is what applies to "${lastUser}".`,
       provider: this.provider,
       model: 'fake',
-      usage: { inputTokens: req.system.length / 4, outputTokens: 20 },
+      usage: {
+        inputTokens: Math.ceil(req.system.length / 4),
+        outputTokens: 20,
+      },
     };
+  }
+
+  /** Word-by-word, to exercise the streaming path end to end. */
+  async *stream(req: ChatRequest): AsyncGenerator<string, ChatResponse> {
+    const res = await this.complete(req);
+    for (const word of res.text.split(/(?<= )/)) yield word;
+    return res;
   }
 
   /** Deterministic screening: score = share of requirement keywords found in the résumé. */

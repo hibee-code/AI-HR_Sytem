@@ -31,6 +31,7 @@ const actor = (o: Partial<AuthUser> = {}): AuthUser => ({
   roles: [],
   permissions: [PERMISSIONS.DOCUMENT_UPLOAD],
   passwordChangedAt: null,
+  mfaEnabled: false,
   ...o,
 });
 const HR = actor({

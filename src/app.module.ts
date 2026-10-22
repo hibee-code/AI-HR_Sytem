@@ -12,6 +12,7 @@ import { RedisThrottlerStorage } from './infrastructure/redis/redis-throttler.st
 import { RedisModule } from './infrastructure/redis/redis.module';
 import { AiModule } from './modules/ai/ai.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
+import { AuditModule } from './modules/audit/audit.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { EmployeesModule } from './modules/employees/employees.module';
@@ -50,11 +51,13 @@ import { UsersModule } from './modules/users/users.module';
         ],
         // Redis-backed so limits hold across multiple app instances.
         storage,
+        skipIf: () => !config.get('THROTTLE_ENABLED', { infer: true }),
       }),
     }),
 
     // ── Feature modules (added one stage at a time) ────────────────────────
     HealthModule,
+    AuditModule,
     RbacModule,
     UsersModule,
     AuthModule,

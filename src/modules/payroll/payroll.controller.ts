@@ -24,6 +24,7 @@ import {
   ListRunsQueryDto,
 } from './dto/payroll.dto';
 import { PayrollService } from './payroll.service';
+import { Audit } from '../audit/audit.decorator';
 
 @ApiTags('payroll')
 @ApiBearerAuth('access-token')
@@ -36,6 +37,9 @@ export class PayrollController {
 
   // ── Salary structures (HR) ────────────────────────────────────────────
 
+  @Audit('payroll.structure.create', 'salary_structure', {
+    bodyKeys: ['employeeId', 'effectiveFrom'],
+  })
   @Post('structures')
   @RequirePermissions(PERMISSIONS.PAYROLL_MANAGE)
   @ApiOperation({
@@ -55,6 +59,7 @@ export class PayrollController {
     return this.payroll.structuresFor((await this.requireProfile(actor)).id);
   }
 
+  @Audit('payroll.structure.view', 'employee', { idParam: 'employeeId' })
   @Get('structures/employee/:employeeId')
   @RequirePermissions(PERMISSIONS.PAYROLL_MANAGE)
   structuresFor(@Param('employeeId', ParseUUIDPipe) employeeId: string) {
@@ -69,6 +74,9 @@ export class PayrollController {
     return this.payroll.listRuns(query);
   }
 
+  @Audit('payroll.run.create', 'payroll_run', {
+    bodyKeys: ['periodStart', 'periodEnd', 'departmentId'],
+  })
   @Post('runs')
   @RequirePermissions(PERMISSIONS.PAYROLL_MANAGE)
   createRun(@Body() dto: CreateRunDto, @CurrentUser('id') userId: string) {
@@ -81,6 +89,7 @@ export class PayrollController {
     return this.payroll.findRun(id);
   }
 
+  @Audit('payroll.run.calculate', 'payroll_run')
   @Post('runs/:id/calculate')
   @RequirePermissions(PERMISSIONS.PAYROLL_MANAGE)
   @ApiOperation({
@@ -91,6 +100,7 @@ export class PayrollController {
     return this.payroll.calculate(id);
   }
 
+  @Audit('payroll.run.approve', 'payroll_run')
   @Post('runs/:id/approve')
   @RequirePermissions(PERMISSIONS.PAYROLL_MANAGE)
   @ApiOperation({ summary: 'Freeze, generate payslip PDFs, notify employees' })
@@ -101,12 +111,14 @@ export class PayrollController {
     return this.payroll.approve(id, userId);
   }
 
+  @Audit('payroll.run.mark_paid', 'payroll_run')
   @Post('runs/:id/mark-paid')
   @RequirePermissions(PERMISSIONS.PAYROLL_MANAGE)
   markPaid(@Param('id', ParseUUIDPipe) id: string) {
     return this.payroll.markPaid(id);
   }
 
+  @Audit('payroll.run.delete', 'payroll_run')
   @Delete('runs/:id')
   @RequirePermissions(PERMISSIONS.PAYROLL_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -135,6 +147,7 @@ export class PayrollController {
     );
   }
 
+  @Audit('payroll.payslip.view', 'payslip')
   @Get('payslips/:id')
   @RequirePermissions(PERMISSIONS.PAYROLL_READ_SELF)
   @ApiOperation({

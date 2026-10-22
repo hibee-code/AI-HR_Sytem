@@ -14,6 +14,7 @@ export interface AuthUser {
   permissions: Permission[];
   /** Epoch seconds of the last password change; access tokens issued before it are rejected. */
   passwordChangedAt: number | null;
+  mfaEnabled: boolean;
 }
 
 /** Claims we put in the access JWT. Keep small: it's on every request. */

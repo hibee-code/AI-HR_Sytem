@@ -26,6 +26,19 @@ export interface ChatModel {
   readonly provider: string;
   isConfigured(): boolean;
   complete(request: ChatRequest): Promise<ChatResponse>;
+  /** Optional token streaming: yields text deltas, returns the final response. */
+  stream?(request: ChatRequest): AsyncGenerator<string, ChatResponse>;
+}
+
+/** Streams from any model; ones without native streaming yield their whole answer once. */
+export async function* streamOf(
+  model: ChatModel,
+  request: ChatRequest,
+): AsyncGenerator<string, ChatResponse> {
+  if (model.stream) return yield* model.stream(request);
+  const res = await model.complete(request);
+  yield res.text;
+  return res;
 }
 
 /** The composed chain that callers depend on (never a single provider). */

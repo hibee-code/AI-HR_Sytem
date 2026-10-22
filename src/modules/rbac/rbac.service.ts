@@ -58,6 +58,7 @@ export class RbacService {
       passwordChangedAt: user.passwordChangedAt
         ? Math.floor(user.passwordChangedAt.getTime() / 1000)
         : null,
+      mfaEnabled: user.mfaEnabled,
     };
 
     await this.redis.set(

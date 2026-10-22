@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { getQueueToken } from '@nestjs/bullmq';
 import { getDataSourceToken } from '@nestjs/typeorm';
 import request from 'supertest';
+import './app.module.spec-env'; // must precede AppModule: env is validated at import
 import { AppModule } from './app.module';
 import { configureApp } from './app.setup';
 import { QUEUES } from './infrastructure/queue/queue.constants';
@@ -25,21 +26,6 @@ describe('AppModule wiring', () => {
   let app: INestApplication;
 
   beforeAll(async () => {
-    Object.assign(process.env, {
-      NODE_ENV: 'test',
-      LOG_LEVEL: 'silent',
-      DB_HOST: 'stub',
-      DB_USERNAME: 'stub',
-      DB_PASSWORD: 'stub',
-      DB_NAME: 'stub',
-      REDIS_HOST: 'stub',
-      WORKERS_ENABLED: 'false',
-      STORAGE_DRIVER: 'memory',
-      AI_DRIVER: 'fake',
-      JWT_ACCESS_SECRET: 'a'.repeat(32),
-      JWT_REFRESH_SECRET: 'b'.repeat(32),
-    });
-
     const fakeRepo = {
       findOne: jest.fn(),
       find: jest.fn(),

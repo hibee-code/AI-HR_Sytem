@@ -8,7 +8,18 @@ const valid = {
   REDIS_HOST: 'localhost',
   JWT_ACCESS_SECRET: 'a'.repeat(32),
   JWT_REFRESH_SECRET: 'b'.repeat(32),
+  MFA_ENCRYPTION_KEY: 'c'.repeat(32),
   STORAGE_DRIVER: 'memory',
+};
+
+/** Passes every production-only rule, so each test isolates one. */
+const prodValid = {
+  ...valid,
+  NODE_ENV: 'production',
+  STORAGE_DRIVER: 'cloudinary',
+  CLOUDINARY_CLOUD_NAME: 'c',
+  CLOUDINARY_API_KEY: 'k',
+  CLOUDINARY_API_SECRET: 's',
 };
 
 describe('validateEnv', () => {
@@ -46,9 +57,46 @@ describe('validateEnv', () => {
   });
 
   it('forbids wildcard CORS in production', () => {
+    expect(() => validateEnv({ ...prodValid, CORS_ORIGINS: '*' })).toThrow(
+      /CORS_ORIGINS/,
+    );
+  });
+
+  it('parses MFA_REQUIRED_ROLES; empty means nobody', () => {
+    expect(validateEnv(valid).MFA_REQUIRED_ROLES).toEqual([
+      'ADMIN',
+      'HR_MANAGER',
+    ]);
+    expect(
+      validateEnv({ ...valid, MFA_REQUIRED_ROLES: ' admin , ' })
+        .MFA_REQUIRED_ROLES,
+    ).toEqual(['ADMIN']);
+    expect(
+      validateEnv({ ...valid, MFA_REQUIRED_ROLES: '' }).MFA_REQUIRED_ROLES,
+    ).toEqual([]);
+  });
+
+  it('accepts a complete production config', () => {
+    expect(validateEnv(prodValid).NODE_ENV).toBe('production');
+  });
+
+  it('forbids dev-only drivers in production', () => {
+    const prod = {
+      ...valid,
+      NODE_ENV: 'production',
+      STORAGE_DRIVER: 'memory',
+      AI_DRIVER: 'fake',
+    };
+    expect(() => validateEnv(prod)).toThrow(/STORAGE_DRIVER[\s\S]*AI_DRIVER/);
+  });
+
+  it('forbids disabling rate limiting in production', () => {
     expect(() =>
-      validateEnv({ ...valid, NODE_ENV: 'production', CORS_ORIGINS: '*' }),
-    ).toThrow(/CORS_ORIGINS/);
+      validateEnv({ ...prodValid, THROTTLE_ENABLED: 'false' }),
+    ).toThrow(/THROTTLE_ENABLED/);
+    expect(validateEnv({ ...valid, THROTTLE_ENABLED: 'false' })).toMatchObject({
+      THROTTLE_ENABLED: false,
+    });
   });
 
   it('requires Cloudinary credentials when the cloudinary driver is selected', () => {

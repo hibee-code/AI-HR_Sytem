@@ -17,6 +17,8 @@ import { EMBEDDINGS_PROVIDER } from '../../infrastructure/ai/embeddings.interfac
 import type { EmbeddingsProvider } from '../../infrastructure/ai/embeddings.interface';
 import { STORAGE_SERVICE } from '../../infrastructure/storage/storage.interface';
 import type { StorageService } from '../../infrastructure/storage/storage.interface';
+import { AiUsageService } from '../ai/ai-usage.service';
+import { AiFeature } from '../ai/entities/ai-usage.entity';
 import { extractText } from '../ai/text-extraction';
 import { DocumentsService } from '../documents/documents.service';
 import type {
@@ -73,6 +75,7 @@ export class RecruitingService {
     @Inject(CHAT_MODEL) private readonly chat: ChatModel,
     @Inject(STORAGE_SERVICE) private readonly storage: StorageService,
     private readonly documents: DocumentsService,
+    private readonly aiUsage: AiUsageService,
     private readonly logger: Logger,
     config: ConfigService<Env, true>,
   ) {
@@ -337,6 +340,10 @@ export class RecruitingService {
         this.chat,
         this.maxTokens,
       );
+      await this.aiUsage.record(result, {
+        feature: AiFeature.SCREENING,
+        userId: null,
+      });
       await this.applications.update(applicationId, {
         screening: result,
         fitScore: result.fitScore,

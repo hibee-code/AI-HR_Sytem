@@ -405,11 +405,13 @@ export class OnboardingService {
     if (c.type === ChecklistType.ONBOARDING) {
       const emp = await this.employees.findById(c.employeeId);
       if (emp.status === EmployeeStatus.ONBOARDING) {
+        // Pre-boarding can finish before day one; activation never predates the hire.
+        const today = todayIso();
         await this.employees.changeStatus(
           c.employeeId,
           {
             status: EmployeeStatus.ACTIVE,
-            effectiveDate: todayIso(),
+            effectiveDate: emp.hireDate > today ? emp.hireDate : today,
             notes: 'Onboarding checklist completed',
           },
           null, // system action

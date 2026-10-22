@@ -9,6 +9,7 @@ import { FakeChatAdapter } from '../../infrastructure/ai/fake-chat.adapter';
 import { FakeEmbeddingsProvider } from '../../infrastructure/ai/fake-embeddings.provider';
 import { MemoryStorageService } from '../../infrastructure/storage/memory-storage.service';
 import { STORAGE_SERVICE } from '../../infrastructure/storage/storage.interface';
+import { AiUsageService } from '../ai/ai-usage.service';
 import { DocumentsService } from '../documents/documents.service';
 import {
   DocumentCategory,
@@ -159,6 +160,7 @@ describe('RecruitingService', () => {
         { provide: CHAT_MODEL, useValue: new FakeChatAdapter() },
         { provide: STORAGE_SERVICE, useValue: storage },
         { provide: DocumentsService, useValue: documents },
+        { provide: AiUsageService, useValue: { record: jest.fn() } },
         { provide: Logger, useValue: { warn: jest.fn() } },
         { provide: ConfigService, useValue: { get: () => 1024 } },
       ],

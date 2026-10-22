@@ -122,6 +122,44 @@ export class UsersService {
     return saved;
   }
 
+  /**
+   * Atomic so parallel guesses can't race past the limit: bumps the counter
+   * and, on reaching `maxAttempts`, locks the account and resets the counter.
+   * Returns the lock expiry when this attempt triggered the lock.
+   */
+  async recordFailedLogin(
+    id: string,
+    maxAttempts: number,
+    lockMinutes: number,
+  ): Promise<Date | null> {
+    const res: unknown = await this.users.query(
+      `UPDATE users SET
+         locked_until = CASE WHEN failed_login_attempts + 1 >= $2
+                             THEN now() + make_interval(mins => $3) ELSE locked_until END,
+         failed_login_attempts = CASE WHEN failed_login_attempts + 1 >= $2
+                                      THEN 0 ELSE failed_login_attempts + 1 END
+       WHERE id = $1
+       RETURNING locked_until, failed_login_attempts`,
+      [id, maxAttempts, lockMinutes],
+    );
+    // UPDATE … RETURNING comes back as [rows, rowCount] from the pg driver.
+    const rows = (
+      Array.isArray(res) && Array.isArray(res[0]) ? res[0] : res
+    ) as {
+      locked_until: Date | null;
+      failed_login_attempts: number;
+    }[];
+    const row = rows[0];
+    return row && row.failed_login_attempts === 0 ? row.locked_until : null;
+  }
+
+  async unlock(id: string): Promise<User> {
+    const user = await this.findById(id);
+    user.failedLoginAttempts = 0;
+    user.lockedUntil = null;
+    return this.users.save(user);
+  }
+
   /** Persist a successful login / password change without re-validating roles. */
   async save(user: User): Promise<User> {
     return this.users.save(user);

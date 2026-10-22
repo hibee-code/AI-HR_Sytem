@@ -29,6 +29,7 @@ const actor = (o: Partial<AuthUser> = {}): AuthUser => ({
   roles: [],
   permissions: [PERMISSIONS.LEAVE_APPROVE],
   passwordChangedAt: null,
+  mfaEnabled: false,
   ...o,
 });
 

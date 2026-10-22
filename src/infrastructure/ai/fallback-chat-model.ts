@@ -4,7 +4,10 @@ import {
   ChatModel,
   ChatRequest,
   ChatResponse,
+  streamOf,
 } from './chat-model.interface';
+
+type Attempt = { provider: string; error: string };
 
 /** After a failure a provider is skipped for this long before being retried. */
 export const DEFAULT_COOLDOWN_MS = 60_000;
@@ -44,6 +47,45 @@ export class FallbackChatModel implements ChatModel {
   }
 
   async complete(req: ChatRequest): Promise<ChatResponse> {
+    const attempts: Attempt[] = [];
+    for (const model of this.order()) {
+      try {
+        const res = await model.complete(req);
+        this.cooldownUntil.delete(model.provider);
+        return res;
+      } catch (err) {
+        this.fail(model, err, attempts);
+      }
+    }
+    throw new AllProvidersFailedError(attempts);
+  }
+
+  /**
+   * Falls through providers until one produces its first chunk; after that
+   * the stream is committed to it (an error mid-answer propagates — the
+   * user has already seen part of it).
+   */
+  async *stream(req: ChatRequest): AsyncGenerator<string, ChatResponse> {
+    const attempts: Attempt[] = [];
+    for (const model of this.order()) {
+      const it = streamOf(model, req);
+      let first: IteratorResult<string, ChatResponse>;
+      try {
+        first = await it.next();
+      } catch (err) {
+        this.fail(model, err, attempts);
+        continue;
+      }
+      this.cooldownUntil.delete(model.provider);
+      if (first.done) return first.value;
+      yield first.value;
+      return yield* it;
+    }
+    throw new AllProvidersFailedError(attempts);
+  }
+
+  /** Configured providers, healthy first; everyone if all are cooling down. */
+  private order(): ChatModel[] {
     const candidates = this.chain.filter((m) => m.isConfigured());
     if (candidates.length === 0) {
       throw new AllProvidersFailedError([
@@ -51,26 +93,17 @@ export class FallbackChatModel implements ChatModel {
       ]);
     }
     const healthy = candidates.filter((m) => !this.onCooldown(m.provider));
-    // If everything is cooling down, try them all anyway rather than fail fast.
-    const order = healthy.length > 0 ? healthy : candidates;
+    return healthy.length > 0 ? healthy : candidates;
+  }
 
-    const attempts: { provider: string; error: string }[] = [];
-    for (const model of order) {
-      try {
-        const res = await model.complete(req);
-        this.cooldownUntil.delete(model.provider);
-        return res;
-      } catch (err) {
-        const message = (err as Error).message ?? String(err);
-        attempts.push({ provider: model.provider, error: message });
-        this.cooldownUntil.set(model.provider, this.now() + this.cooldownMs);
-        this.logger.warn(
-          { provider: model.provider, err: message },
-          'chat provider failed; falling back',
-        );
-      }
-    }
-    throw new AllProvidersFailedError(attempts);
+  private fail(model: ChatModel, err: unknown, attempts: Attempt[]): void {
+    const message = (err as Error).message ?? String(err);
+    attempts.push({ provider: model.provider, error: message });
+    this.cooldownUntil.set(model.provider, this.now() + this.cooldownMs);
+    this.logger.warn(
+      { provider: model.provider, err: message },
+      'chat provider failed; falling back',
+    );
   }
 
   private onCooldown(provider: string): boolean {

@@ -34,6 +34,7 @@ const user = (over: Partial<AuthUser> = {}): AuthUser => ({
   roles: [],
   permissions: [],
   passwordChangedAt: null,
+  mfaEnabled: false,
   ...over,
 });
 

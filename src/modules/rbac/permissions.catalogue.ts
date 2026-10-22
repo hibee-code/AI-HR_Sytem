@@ -18,6 +18,8 @@ export const PERMISSIONS = {
   ROLE_MANAGE: 'role:manage',
   NOTIFICATION_READ_LOG: 'notification:read_log',
   NOTIFICATION_SEND_TEST: 'notification:send_test',
+  /** Read the audit trail. Admin only. */
+  AUDIT_READ: 'audit:read',
 
   // ── Employees / org (stage 2) ─────────────────────────────────────────
   EMPLOYEE_READ_SELF: 'employee:read_self',
@@ -64,6 +66,8 @@ export const PERMISSIONS = {
   // ── AI (stages 9–10) ──────────────────────────────────────────────────
   AI_CHAT: 'ai:chat',
   AI_MANAGE_KNOWLEDGE_BASE: 'ai:manage_knowledge_base',
+  /** Token / cost reports for AI features. */
+  AI_READ_USAGE: 'ai:read_usage',
   RECRUITING_READ: 'recruiting:read',
   RECRUITING_MANAGE: 'recruiting:manage',
   RECRUITING_SCREEN: 'recruiting:screen',
@@ -134,6 +138,7 @@ const HR_MANAGER_PERMISSIONS: Permission[] = [
   P.REVIEW_MANAGE_CYCLES,
   P.PAYROLL_MANAGE,
   P.AI_MANAGE_KNOWLEDGE_BASE,
+  P.AI_READ_USAGE,
   P.RECRUITING_READ,
 ];
 

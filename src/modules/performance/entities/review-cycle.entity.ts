@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 import { BaseEntity } from '../../../common/entities/base.entity';
+import { jsonbDefault } from '../../../common/typeorm/jsonb-default';
 import { Department } from '../../employees/entities/department.entity';
 
 export enum CyclePhase {
@@ -86,7 +87,7 @@ export class ReviewCycle extends BaseEntity {
   @Column({
     name: 'rating_scale',
     type: 'jsonb',
-    default: () => `'${JSON.stringify(DEFAULT_RATING_SCALE)}'`,
+    default: jsonbDefault(DEFAULT_RATING_SCALE),
   })
   ratingScale: RatingLevel[];
 

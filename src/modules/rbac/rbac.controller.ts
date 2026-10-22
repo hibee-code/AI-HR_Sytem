@@ -15,6 +15,7 @@ import { RequirePermissions } from '../../common/decorators/require-permissions.
 import { CreateRoleDto, UpdateRoleDto } from './dto/role.dto';
 import { PERMISSIONS } from './permissions.catalogue';
 import { RbacService } from './rbac.service';
+import { Audit } from '../audit/audit.decorator';
 
 @ApiTags('rbac')
 @ApiBearerAuth('access-token')
@@ -42,6 +43,7 @@ export class RbacController {
     return this.rbac.findRoleById(id);
   }
 
+  @Audit('role.create', 'role', { bodyKeys: ['name', 'permissions'] })
   @Post('roles')
   @RequirePermissions(PERMISSIONS.ROLE_MANAGE)
   @ApiOperation({ summary: 'Create a custom role' })
@@ -49,6 +51,7 @@ export class RbacController {
     return this.rbac.createRole(dto);
   }
 
+  @Audit('role.update', 'role', { bodyKeys: ['description', 'permissions'] })
   @Patch('roles/:id')
   @RequirePermissions(PERMISSIONS.ROLE_MANAGE)
   @ApiOperation({
@@ -61,6 +64,7 @@ export class RbacController {
     return this.rbac.updateRole(id, dto);
   }
 
+  @Audit('role.delete', 'role')
   @Delete('roles/:id')
   @RequirePermissions(PERMISSIONS.ROLE_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)

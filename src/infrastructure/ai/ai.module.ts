@@ -53,6 +53,7 @@ import { OpenAiChatAdapter } from './openai-chat.adapter';
           anthropic: new AnthropicChatAdapter(
             config.get('ANTHROPIC_API_KEY', { infer: true }),
             config.get('ANTHROPIC_MODEL', { infer: true }),
+            config.get('ANTHROPIC_EFFORT', { infer: true }),
           ),
           openai: new OpenAiChatAdapter(
             config.get('OPENAI_API_KEY', { infer: true }),

@@ -1,20 +1,36 @@
-import { BadRequestException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpStatus,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Test } from '@nestjs/testing';
 import * as argon2 from 'argon2';
+import { AuditService } from '../audit/audit.service';
 import { RbacService } from '../rbac/rbac.service';
 import { User, UserStatus } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
 import { AUTH_EVENTS } from './auth.events';
 import { AuthService } from './auth.service';
 import { OneTimeTokenType } from './entities/one-time-token.entity';
+import { MfaService } from './mfa.service';
 import { TokenService } from './token.service';
 
 describe('AuthService', () => {
   let service: AuthService;
   let users: jest.Mocked<
-    Pick<UsersService, 'findByEmail' | 'findById' | 'save' | 'createInvited'>
+    Pick<
+      UsersService,
+      | 'findByEmail'
+      | 'findById'
+      | 'save'
+      | 'createInvited'
+      | 'recordFailedLogin'
+    >
   >;
+  let mfa: { verify: jest.Mock };
+  let audit: { record: jest.Mock };
   let tokens: jest.Mocked<
     Pick<
       TokenService,
@@ -23,6 +39,8 @@ describe('AuthService', () => {
       | 'revokeAllForUser'
       | 'issueOneTime'
       | 'consumeOneTime'
+      | 'issueMfaChallenge'
+      | 'verifyMfaChallenge'
     >
   >;
   let rbac: jest.Mocked<
@@ -41,6 +59,7 @@ describe('AuthService', () => {
       status: UserStatus.ACTIVE,
       passwordHash: await argon2.hash(PASSWORD),
       passwordChangedAt: null,
+      mfaEnabled: false,
     });
   });
 
@@ -50,7 +69,10 @@ describe('AuthService', () => {
       findById: jest.fn(),
       save: jest.fn(async (u) => u),
       createInvited: jest.fn(),
+      recordFailedLogin: jest.fn().mockResolvedValue(null),
     };
+    mfa = { verify: jest.fn() };
+    audit = { record: jest.fn() };
     tokens = {
       issueForLogin: jest.fn().mockResolvedValue({
         accessToken: 'a',
@@ -63,6 +85,8 @@ describe('AuthService', () => {
         .fn()
         .mockResolvedValue({ raw: 'one-time-raw', expiresAt: new Date() }),
       consumeOneTime: jest.fn(),
+      issueMfaChallenge: jest.fn().mockResolvedValue('mfa-challenge'),
+      verifyMfaChallenge: jest.fn().mockResolvedValue('u1'),
     };
     rbac = { getAuthUser: jest.fn(), invalidateAuthUser: jest.fn() };
     events = { emit: jest.fn() };
@@ -74,6 +98,15 @@ describe('AuthService', () => {
         { provide: TokenService, useValue: tokens },
         { provide: RbacService, useValue: rbac },
         { provide: EventEmitter2, useValue: events },
+        { provide: MfaService, useValue: mfa },
+        { provide: AuditService, useValue: audit },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: (k: string) =>
+              ({ LOGIN_MAX_ATTEMPTS: 5, LOGIN_LOCKOUT_MINUTES: 15 })[k],
+          },
+        },
       ],
     }).compile();
     service = moduleRef.get(AuthService);
@@ -86,18 +119,77 @@ describe('AuthService', () => {
 
       const result = await service.login('jane@x.io', PASSWORD, {});
 
-      expect(result.accessToken).toBe('a');
+      expect(result).toMatchObject({ mfaRequired: false, accessToken: 'a' });
       expect(u.lastLoginAt).toBeInstanceOf(Date);
       expect(tokens.issueForLogin).toHaveBeenCalledWith(u, {});
     });
 
-    it('rejects wrong password with a generic message', async () => {
+    it('rejects wrong password with a generic message and counts the failure', async () => {
       users.findByEmail.mockResolvedValue(
         Object.assign(new User(), activeUser),
       );
       await expect(service.login('jane@x.io', 'wrong', {})).rejects.toThrow(
         'Invalid email or password',
       );
+      expect(users.recordFailedLogin).toHaveBeenCalledWith('u1', 5, 15);
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'auth.login_failed' }),
+      );
+    });
+
+    it('audits the lock when the failure reaches the limit', async () => {
+      users.findByEmail.mockResolvedValue(
+        Object.assign(new User(), activeUser),
+      );
+      users.recordFailedLogin.mockResolvedValue(new Date(Date.now() + 9e5));
+      await expect(service.login('jane@x.io', 'wrong', {})).rejects.toThrow();
+      expect(audit.record).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'auth.locked' }),
+      );
+    });
+
+    it('refuses a locked account before checking the password (423)', async () => {
+      users.findByEmail.mockResolvedValue(
+        Object.assign(new User(), activeUser, {
+          lockedUntil: new Date(Date.now() + 60_000),
+        }),
+      );
+      await expect(
+        service.login('jane@x.io', PASSWORD, {}),
+      ).rejects.toMatchObject({ status: HttpStatus.LOCKED });
+      expect(tokens.issueForLogin).not.toHaveBeenCalled();
+    });
+
+    it('returns an MFA challenge instead of tokens when MFA is enabled', async () => {
+      users.findByEmail.mockResolvedValue(
+        Object.assign(new User(), activeUser, { mfaEnabled: true }),
+      );
+      await expect(service.login('jane@x.io', PASSWORD, {})).resolves.toEqual({
+        mfaRequired: true,
+        mfaToken: 'mfa-challenge',
+        expiresIn: 300,
+      });
+      expect(tokens.issueForLogin).not.toHaveBeenCalled();
+    });
+
+    it('verifyMfa issues tokens for a good code and counts a bad one', async () => {
+      const u = Object.assign(new User(), activeUser, {
+        mfaEnabled: true,
+        failedLoginAttempts: 2,
+      });
+      users.findById.mockResolvedValue(u);
+
+      mfa.verify.mockResolvedValueOnce(false);
+      await expect(service.verifyMfa('t', '000000', {})).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(users.recordFailedLogin).toHaveBeenCalled();
+
+      mfa.verify.mockResolvedValueOnce(true);
+      await expect(service.verifyMfa('t', '123456', {})).resolves.toMatchObject(
+        { mfaRequired: false, accessToken: 'a' },
+      );
+      expect(u.failedLoginAttempts).toBe(0);
     });
 
     it('rejects unknown email with the same generic message', async () => {
@@ -143,6 +235,7 @@ describe('AuthService', () => {
         roles: [],
         permissions: [],
         passwordChangedAt: null,
+        mfaEnabled: false,
       });
 
       await expect(service.refresh('r', {})).rejects.toThrow(/not active/);

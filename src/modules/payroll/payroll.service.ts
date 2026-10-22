@@ -8,7 +8,6 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
-  In,
   IsNull,
   LessThanOrEqual,
   MoreThanOrEqual,
@@ -24,10 +23,7 @@ import {
   DocumentCategory,
   DocumentVisibility,
 } from '../documents/entities/document.entity';
-import {
-  Employee,
-  EmployeeStatus,
-} from '../employees/entities/employee.entity';
+import { Employee } from '../employees/entities/employee.entity';
 import { EmployeesService } from '../employees/employees.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PERMISSIONS } from '../rbac/permissions.catalogue';
@@ -220,11 +216,17 @@ export class PayrollService {
       throw new BadRequestException(`Cannot recalculate a ${run.status} run`);
     }
 
+    // Everyone employed for any part of the period — joiners and leavers
+    // included (the calculator pro-rates them), whatever their status now.
+    const scope = {
+      hireDate: LessThanOrEqual(run.periodEnd),
+      ...(run.departmentId ? { departmentId: run.departmentId } : {}),
+    };
     const emps = await this.employeeRepo.find({
-      where: {
-        status: In([EmployeeStatus.ACTIVE, EmployeeStatus.ON_LEAVE]),
-        ...(run.departmentId ? { departmentId: run.departmentId } : {}),
-      },
+      where: [
+        { ...scope, terminationDate: IsNull() },
+        { ...scope, terminationDate: MoreThanOrEqual(run.periodStart) },
+      ],
       order: { lastName: 'ASC' },
     });
 
@@ -251,10 +253,11 @@ export class PayrollService {
         });
         continue;
       }
-      const c = this.calculator.calculate(structure, {
-        start: run.periodStart,
-        end: run.periodEnd,
-      });
+      const c = this.calculator.calculate(
+        structure,
+        { start: run.periodStart, end: run.periodEnd },
+        { hireDate: e.hireDate, terminationDate: e.terminationDate },
+      );
       await this.payslips.save(
         this.payslips.create({
           runId: id,

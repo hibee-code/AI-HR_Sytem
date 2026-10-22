@@ -17,11 +17,16 @@ import type { Env } from '../../config/env.schema';
 import {
   AllProvidersFailedError,
   CHAT_MODEL,
+  streamOf,
 } from '../../infrastructure/ai/chat-model.interface';
 import type {
   ChatModel,
+  ChatRequest,
+  ChatResponse,
   ChatTurn,
 } from '../../infrastructure/ai/chat-model.interface';
+import { AiUsageService } from './ai-usage.service';
+import { AiFeature } from './entities/ai-usage.entity';
 import { AiConversation } from './entities/ai-conversation.entity';
 import {
   AiMessage,
@@ -39,6 +44,21 @@ export interface ChatResult {
   provider: string;
   model: string | null;
   grounded: boolean;
+}
+
+/** Server-sent events of POST /ai/assistant/chat/stream, in order. */
+export type AssistantEvent =
+  | { type: 'meta'; conversationId: string; citations: Citation[] }
+  | { type: 'delta'; text: string }
+  | ({ type: 'done' } & ChatResult)
+  | { type: 'error'; message: string };
+
+/** A prepared question; `request` is null when retrieval found nothing. */
+interface Turn {
+  userId: string;
+  conversation: AiConversation;
+  citations: Citation[];
+  request: ChatRequest | null;
 }
 
 /** How many prior turns are replayed to the model. */
@@ -67,32 +87,94 @@ export class AssistantService {
     private readonly messages: Repository<AiMessage>,
     @Inject(CHAT_MODEL) private readonly chat: ChatModel,
     private readonly kb: KnowledgeBaseService,
+    private readonly usage: AiUsageService,
     private readonly logger: Logger,
     config: ConfigService<Env, true>,
   ) {
     this.maxTokens = config.get('AI_MAX_OUTPUT_TOKENS', { infer: true });
   }
 
+  /** One-shot answer (JSON). */
   async ask(
     userId: string,
     question: string,
     conversationId?: string,
   ): Promise<ChatResult> {
+    const turn = await this.prepare(userId, question, conversationId);
+    if (!turn.request) return this.saveAnswer(turn, null);
+    try {
+      return await this.saveAnswer(
+        turn,
+        await this.chat.complete(turn.request),
+      );
+    } catch (err) {
+      throw this.unavailable(err);
+    }
+  }
+
+  /**
+   * Same as ask(), streamed. Everything that can be refused (ownership, the
+   * daily cap) runs before the first event, so callers can still return a
+   * normal HTTP error; after that, failures arrive as an `error` event.
+   */
+  async askStream(
+    userId: string,
+    question: string,
+    conversationId?: string,
+  ): Promise<AsyncGenerator<AssistantEvent>> {
+    const turn = await this.prepare(userId, question, conversationId);
+    return this.streamTurn(turn);
+  }
+
+  private async *streamTurn(turn: Turn): AsyncGenerator<AssistantEvent> {
+    yield {
+      type: 'meta',
+      conversationId: turn.conversation.id,
+      citations: turn.citations,
+    };
+    if (!turn.request) {
+      const result = await this.saveAnswer(turn, null);
+      yield { type: 'delta', text: result.answer };
+      yield { type: 'done', ...result };
+      return;
+    }
+    try {
+      const it = streamOf(this.chat, turn.request);
+      let next = await it.next();
+      while (!next.done) {
+        yield { type: 'delta', text: next.value };
+        next = await it.next();
+      }
+      yield { type: 'done', ...(await this.saveAnswer(turn, next.value)) };
+    } catch (err) {
+      yield { type: 'error', message: this.unavailable(err).message };
+    }
+  }
+
+  /** Quota, conversation, user message and retrieval — shared by both paths. */
+  private async prepare(
+    userId: string,
+    question: string,
+    conversationId?: string,
+  ): Promise<Turn> {
     const conversation = conversationId
       ? await this.ownConversation(conversationId, userId)
-      : await this.conversations.save(
-          this.conversations.create({
-            userId,
-            title:
-              question.slice(0, 117).trim() +
-              (question.length > 117 ? '…' : ''),
-          }),
-        );
+      : null;
+    await this.usage.assertWithinDailyLimit(userId);
 
-    const history = await this.recentTurns(conversation.id);
+    const conv =
+      conversation ??
+      (await this.conversations.save(
+        this.conversations.create({
+          userId,
+          title:
+            question.slice(0, 117).trim() + (question.length > 117 ? '…' : ''),
+        }),
+      ));
+    const history = await this.recentTurns(conv.id);
     await this.messages.save(
       this.messages.create({
-        conversationId: conversation.id,
+        conversationId: conv.id,
         role: AiMessageRole.USER,
         content: question,
         citations: [],
@@ -100,76 +182,74 @@ export class AssistantService {
     );
 
     const chunks = await this.kb.search(question);
-    if (chunks.length === 0) {
-      const saved = await this.messages.save(
-        this.messages.create({
-          conversationId: conversation.id,
-          role: AiMessageRole.ASSISTANT,
-          content: NOT_FOUND_ANSWER,
-          citations: [],
-          provider: 'none',
-        }),
-      );
-      return {
-        conversationId: conversation.id,
-        messageId: saved.id,
-        answer: NOT_FOUND_ANSWER,
-        citations: [],
-        provider: 'none',
-        model: null,
-        grounded: false,
-      };
-    }
-
-    const citations = toCitations(chunks);
-    let response;
-    try {
-      response = await this.chat.complete({
+    // Nothing relevant: answer "not found" without calling (or paying for) a model.
+    if (chunks.length === 0)
+      return { userId, conversation: conv, citations: [], request: null };
+    return {
+      userId,
+      conversation: conv,
+      citations: toCitations(chunks),
+      request: {
         system: `${SYSTEM_PROMPT}\n\nPolicy excerpts:\n${renderContext(chunks)}`,
         messages: [...history, { role: 'user', content: question }],
         maxTokens: this.maxTokens,
-      });
-    } catch (err) {
-      if (err instanceof AllProvidersFailedError) {
-        this.logger.error({ attempts: err.attempts }, 'assistant unavailable');
-        throw new ServiceUnavailableException(
-          'The assistant is temporarily unavailable. Please try again shortly.',
-        );
-      }
-      throw err;
-    }
+      },
+    };
+  }
 
+  /** Persists the assistant turn (and its usage); null response = not found. */
+  private async saveAnswer(
+    turn: Turn,
+    response: ChatResponse | null,
+  ): Promise<ChatResult> {
+    const answer = response?.text ?? NOT_FOUND_ANSWER;
     // Keep only citations the model actually referenced; fall back to all if it cited none.
     const referenced = new Set(
-      [...response.text.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1])),
+      [...answer.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1])),
     );
     const used = referenced.size
-      ? citations.filter((c) => referenced.has(c.ref))
-      : citations;
+      ? turn.citations.filter((c) => referenced.has(c.ref))
+      : turn.citations;
 
     const saved = await this.messages.save(
       this.messages.create({
-        conversationId: conversation.id,
+        conversationId: turn.conversation.id,
         role: AiMessageRole.ASSISTANT,
-        content: response.text,
+        content: answer,
         citations: used,
-        provider: response.provider,
-        model: response.model,
-        inputTokens: response.usage?.inputTokens ?? null,
-        outputTokens: response.usage?.outputTokens ?? null,
+        provider: response?.provider ?? 'none',
+        model: response?.model ?? null,
+        inputTokens: response?.usage?.inputTokens ?? null,
+        outputTokens: response?.usage?.outputTokens ?? null,
       }),
     );
-    await this.conversations.update(conversation.id, { updatedAt: new Date() });
+    await this.conversations.update(turn.conversation.id, {
+      updatedAt: new Date(),
+    });
+    if (response) {
+      await this.usage.record(response, {
+        feature: AiFeature.ASSISTANT,
+        userId: turn.userId,
+      });
+    }
 
     return {
-      conversationId: conversation.id,
+      conversationId: turn.conversation.id,
       messageId: saved.id,
-      answer: response.text,
+      answer,
       citations: used,
-      provider: response.provider,
-      model: response.model,
-      grounded: true,
+      provider: response?.provider ?? 'none',
+      model: response?.model ?? null,
+      grounded: response !== null,
     };
+  }
+
+  private unavailable(err: unknown): Error {
+    if (!(err instanceof AllProvidersFailedError)) return err as Error;
+    this.logger.error({ attempts: err.attempts }, 'assistant unavailable');
+    return new ServiceUnavailableException(
+      'The assistant is temporarily unavailable. Please try again shortly.',
+    );
   }
 
   async listConversations(

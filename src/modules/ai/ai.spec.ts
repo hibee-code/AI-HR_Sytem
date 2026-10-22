@@ -12,6 +12,7 @@ import {
 } from '../../infrastructure/ai/chat-model.interface';
 import { FakeChatAdapter } from '../../infrastructure/ai/fake-chat.adapter';
 import { FakeEmbeddingsProvider } from '../../infrastructure/ai/fake-embeddings.provider';
+import { AiUsageService } from './ai-usage.service';
 import { AssistantService, NOT_FOUND_ANSWER } from './assistant.service';
 import { AiConversation } from './entities/ai-conversation.entity';
 import { AiMessage, AiMessageRole } from './entities/ai-message.entity';
@@ -55,6 +56,7 @@ describe('AssistantService', () => {
   let conversations: Record<string, jest.Mock>;
   let messages: Record<string, jest.Mock>;
   let kb: { search: jest.Mock };
+  let usage: { assertWithinDailyLimit: jest.Mock; record: jest.Mock };
   let chat: FakeChatAdapter;
 
   beforeEach(async () => {
@@ -74,6 +76,7 @@ describe('AssistantService', () => {
       find: jest.fn(async () => []),
     };
     kb = { search: jest.fn(async () => []) };
+    usage = { assertWithinDailyLimit: jest.fn(), record: jest.fn() };
     chat = new FakeChatAdapter();
 
     const moduleRef = await Test.createTestingModule({
@@ -86,11 +89,69 @@ describe('AssistantService', () => {
         { provide: getRepositoryToken(AiMessage), useValue: messages },
         { provide: CHAT_MODEL, useValue: chat },
         { provide: KnowledgeBaseService, useValue: kb },
+        { provide: AiUsageService, useValue: usage },
         { provide: Logger, useValue: { error: jest.fn() } },
         { provide: ConfigService, useValue: { get: () => 4096 } },
       ],
     }).compile();
     service = moduleRef.get(AssistantService);
+  });
+
+  const policyChunk = {
+    documentId: 'd1',
+    title: 'Leave policy',
+    chunkIndex: 0,
+    content: 'Employees get 20 days of annual leave.',
+    similarity: 0.8,
+  };
+
+  it('enforces the daily cap before creating anything', async () => {
+    usage.assertWithinDailyLimit.mockRejectedValueOnce(new Error('limit'));
+    await expect(service.ask('u1', 'Leave days?')).rejects.toThrow('limit');
+    expect(conversations.save).not.toHaveBeenCalled();
+    expect(messages.save).not.toHaveBeenCalled();
+  });
+
+  it('records usage only when a model was called', async () => {
+    await service.ask('u1', 'What is the dress code?');
+    expect(usage.record).not.toHaveBeenCalled();
+    kb.search.mockResolvedValueOnce([policyChunk]);
+    await service.ask('u1', 'How many leave days?');
+    expect(usage.record).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'fake' }),
+      { feature: 'assistant', userId: 'u1' },
+    );
+  });
+
+  it('streams meta → deltas → done, and the deltas add up to the saved answer', async () => {
+    kb.search.mockResolvedValueOnce([policyChunk]);
+    const events = [];
+    for await (const e of await service.askStream('u1', 'How many leave days?'))
+      events.push(e);
+    expect(events[0]).toMatchObject({ type: 'meta', conversationId: 'conv-1' });
+    const done = events.at(-1) as { type: string; answer: string };
+    expect(done.type).toBe('done');
+    const deltas = events.filter((e) => e.type === 'delta');
+    expect(deltas.length).toBeGreaterThan(1);
+    expect(deltas.map((d) => (d as { text: string }).text).join('')).toBe(
+      done.answer,
+    );
+  });
+
+  it('a stream whose providers all fail ends with an error event', async () => {
+    kb.search.mockResolvedValueOnce([policyChunk]);
+    jest
+      .spyOn(chat, 'complete')
+      .mockRejectedValueOnce(
+        new AllProvidersFailedError([{ provider: 'fake', error: 'down' }]),
+      );
+    const events = [];
+    for await (const e of await service.askStream('u1', 'Leave?'))
+      events.push(e);
+    expect(events.at(-1)).toEqual({
+      type: 'error',
+      message: expect.stringMatching(/temporarily unavailable/),
+    });
   });
 
   it('answers without calling the model when nothing relevant is retrieved', async () => {

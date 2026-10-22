@@ -167,8 +167,9 @@ describe('Payroll (e2e)', () => {
     expect(run.totals).toMatchObject({
       employees: 1,
       gross: 720000,
-      deductions: 120000,
-      net: 600000,
+      // own PENSION 48,000 + own TAX 72,000 + statutory NHF 2.5% of 600,000
+      deductions: 135000,
+      net: 585000,
       skipped: 1,
     });
     expect(skipped).toEqual([
@@ -206,7 +207,7 @@ describe('Payroll (e2e)', () => {
         .set(auth(emp.token))
         .expect(200)
     ).body;
-    expect(slip).toMatchObject({ net: 600000, currency: 'NGN' });
+    expect(slip).toMatchObject({ net: 585000, currency: 'NGN' });
     expect(slip.documentId).toBeTruthy();
 
     const doc = (

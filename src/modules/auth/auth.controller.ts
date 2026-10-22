@@ -19,22 +19,30 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import { instanceToPlain } from 'class-transformer';
 import type { AuthUser } from '../../common/auth/auth-user.interface';
+import { AllowWithoutMfa } from '../../common/decorators/allow-without-mfa.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
 import { PERMISSIONS } from '../rbac/permissions.catalogue';
 import { InviteUserDto } from '../users/dto/user.dto';
-import { AuthService } from './auth.service';
+import { AuthService, LoginResult } from './auth.service';
 import {
   AcceptInviteDto,
   ChangePasswordDto,
   ForgotPasswordDto,
   LoginDto,
+  LoginResponse,
+  MfaCodeDto,
+  MfaEnabledResponse,
+  MfaSetupResponse,
+  MfaVerifyDto,
   RefreshTokenDto,
   ResetPasswordDto,
   TokenPairResponse,
 } from './dto/auth.dto';
+import { MfaService } from './mfa.service';
 import type { ClientMeta, IssuedTokens } from './token.service';
+import { Audit } from '../audit/audit.decorator';
 
 /** Tighter limit for credential-guessing surfaces: 5 attempts / minute / IP. */
 const STRICT = { default: { limit: 5, ttl: 60_000 } };
@@ -42,24 +50,83 @@ const STRICT = { default: { limit: 5, ttl: 60_000 } };
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly mfa: MfaService,
+  ) {}
 
   @Public()
   @Throttle(STRICT)
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Exchange email + password for an access/refresh token pair',
+    summary:
+      'Email + password → token pair, or an MFA challenge (mfaRequired: true)',
   })
-  @ApiOkResponse({ type: TokenPairResponse })
+  @ApiOkResponse({ type: LoginResponse })
   async login(
     @Body() dto: LoginDto,
     @Ip() ip: string,
     @Headers('user-agent') ua?: string,
   ) {
-    return toResponse(
+    return toLoginResponse(
       await this.auth.login(dto.email, dto.password, meta(ip, ua)),
     );
+  }
+
+  // ── MFA ──────────────────────────────────────────────────────────────
+
+  @Public()
+  @Throttle(STRICT)
+  @Post('mfa/verify')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Finish an MFA login with a TOTP or recovery code',
+  })
+  @ApiOkResponse({ type: LoginResponse })
+  async verifyMfa(
+    @Body() dto: MfaVerifyDto,
+    @Ip() ip: string,
+    @Headers('user-agent') ua?: string,
+  ) {
+    return toLoginResponse(
+      await this.auth.verifyMfa(dto.mfaToken, dto.code, meta(ip, ua)),
+    );
+  }
+
+  @ApiBearerAuth('access-token')
+  @AllowWithoutMfa()
+  @Post('mfa/setup')
+  @ApiOperation({
+    summary: 'Start TOTP enrolment: returns a seed + otpauth URI for a QR code',
+  })
+  @ApiOkResponse({ type: MfaSetupResponse })
+  mfaSetup(@CurrentUser('id') userId: string) {
+    return this.mfa.beginSetup(userId);
+  }
+
+  @ApiBearerAuth('access-token')
+  @AllowWithoutMfa()
+  @Audit('auth.mfa.enable', 'user')
+  @Post('mfa/enable')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Confirm enrolment with a code; returns one-time recovery codes',
+  })
+  @ApiOkResponse({ type: MfaEnabledResponse })
+  mfaEnable(@CurrentUser('id') userId: string, @Body() dto: MfaCodeDto) {
+    return this.mfa.enable(userId, dto.code);
+  }
+
+  @ApiBearerAuth('access-token')
+  @Audit('auth.mfa.disable', 'user')
+  @Post('mfa/disable')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Turn MFA off (not allowed for roles where it is mandatory)',
+  })
+  mfaDisable(@CurrentUser('id') userId: string, @Body() dto: MfaCodeDto) {
+    return this.mfa.disable(userId, dto.code);
   }
 
   @Public()
@@ -86,6 +153,7 @@ export class AuthController {
   }
 
   @ApiBearerAuth('access-token')
+  @AllowWithoutMfa()
   @Post('logout-all')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Revoke every refresh token for the current user' })
@@ -94,19 +162,26 @@ export class AuthController {
   }
 
   @ApiBearerAuth('access-token')
+  @AllowWithoutMfa()
   @Get('me')
   @ApiOperation({
-    summary: 'Current user profile with roles and effective permissions',
+    summary:
+      'Current user: roles, effective permissions and MFA state (mfaSetupRequired → send them to setup)',
   })
   async me(@CurrentUser() user: AuthUser) {
     const profile = await this.auth.me(user);
-    return { ...instanceToPlain(profile), permissions: user.permissions };
+    return {
+      ...instanceToPlain(profile),
+      permissions: user.permissions,
+      mfaSetupRequired: !user.mfaEnabled && this.mfa.isRequiredFor(user.roles),
+    };
   }
 
   // ── Invite ───────────────────────────────────────────────────────────
 
   @ApiBearerAuth('access-token')
   @RequirePermissions(PERMISSIONS.USER_INVITE)
+  @Audit('user.invite', 'user', { bodyKeys: ['roles'] })
   @Post('invite')
   @ApiOperation({ summary: 'Create a user and send them an invite link' })
   invite(@Body() dto: InviteUserDto) {
@@ -115,6 +190,7 @@ export class AuthController {
 
   @ApiBearerAuth('access-token')
   @RequirePermissions(PERMISSIONS.USER_INVITE)
+  @Audit('user.invite.resend', 'user', { idParam: 'userId' })
   @Post('invite/:userId/resend')
   @HttpCode(HttpStatus.NO_CONTENT)
   resendInvite(@Param('userId', ParseUUIDPipe) userId: string) {
@@ -164,6 +240,8 @@ export class AuthController {
   }
 
   @ApiBearerAuth('access-token')
+  @AllowWithoutMfa()
+  @Audit('auth.password.change', 'user')
   @Post('change-password')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
@@ -187,4 +265,8 @@ function meta(ip: string, ua?: string): ClientMeta {
 
 function toResponse(t: IssuedTokens): TokenPairResponse {
   return { ...t, tokenType: 'Bearer' };
+}
+
+function toLoginResponse(r: LoginResult): LoginResponse {
+  return r.mfaRequired ? r : { ...r, tokenType: 'Bearer' };
 }

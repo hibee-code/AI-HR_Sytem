@@ -5,6 +5,7 @@ import { AiInfrastructureModule } from '../../infrastructure/ai/ai.module';
 import { QUEUES } from '../../infrastructure/queue/queue.constants';
 import { QueueModule } from '../../infrastructure/queue/queue.module';
 import { StorageModule } from '../../infrastructure/storage/storage.module';
+import { AiModule } from '../ai/ai.module';
 import { DocumentsModule } from '../documents/documents.module';
 import { Department } from '../employees/entities/department.entity';
 import { Position } from '../employees/entities/position.entity';
@@ -27,6 +28,7 @@ import { RecruitingService } from './recruiting.service';
     QueueModule,
     BullModule.registerQueue({ name: QUEUES.RECRUITING }),
     AiInfrastructureModule,
+    AiModule,
     StorageModule,
     DocumentsModule,
   ],

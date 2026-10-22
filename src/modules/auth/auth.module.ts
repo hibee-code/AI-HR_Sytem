@@ -8,7 +8,9 @@ import { AuthService } from './auth.service';
 import { OneTimeToken } from './entities/one-time-token.entity';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { MfaService } from './mfa.service';
 import { TokenService } from './token.service';
+import { UserSecurityController } from './user-security.controller';
 
 @Module({
   imports: [
@@ -19,8 +21,8 @@ import { TokenService } from './token.service';
     UsersModule,
     RbacModule,
   ],
-  controllers: [AuthController],
-  providers: [AuthService, TokenService, JwtAuthGuard],
-  exports: [AuthService, TokenService, JwtAuthGuard],
+  controllers: [AuthController, UserSecurityController],
+  providers: [AuthService, TokenService, MfaService, JwtAuthGuard],
+  exports: [AuthService, TokenService, MfaService, JwtAuthGuard],
 })
 export class AuthModule {}

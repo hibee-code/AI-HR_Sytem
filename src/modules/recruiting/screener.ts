@@ -109,6 +109,7 @@ export async function screenResume(
     missingRequirements: a.missingRequirements,
     provider: response.provider,
     model: response.model,
+    usage: response.usage,
     screenedAt: new Date().toISOString(),
   };
 }

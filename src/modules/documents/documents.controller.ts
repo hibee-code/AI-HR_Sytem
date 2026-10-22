@@ -45,6 +45,7 @@ import {
   UpdateDocumentDto,
 } from './dto/documents.dto';
 import type { UploadedFile } from './dto/documents.dto';
+import { Audit } from '../audit/audit.decorator';
 
 /** Multer keeps files in memory; the service enforces size/type before anything is stored. */
 const upload = () =>
@@ -149,6 +150,7 @@ export class DocumentsController {
     return doc;
   }
 
+  @Audit('document.download', 'document')
   @Get(':id/download')
   @RequireAnyPermission(
     PERMISSIONS.DOCUMENT_READ_SELF,
@@ -167,6 +169,10 @@ export class DocumentsController {
     return this.documents.downloadLink(id, actor, version);
   }
 
+  @Audit('document.update', 'document', {
+    bodyKeys: ['visibility', 'category'],
+    fields: true,
+  })
   @Patch(':id')
   @RequirePermissions(PERMISSIONS.DOCUMENT_UPLOAD)
   @ApiOperation({ summary: 'Edit metadata (uploader or HR)' })
@@ -178,6 +184,7 @@ export class DocumentsController {
     return this.documents.update(id, dto, actor);
   }
 
+  @Audit('document.delete', 'document')
   @Delete(':id')
   @RequirePermissions(PERMISSIONS.DOCUMENT_UPLOAD)
   @HttpCode(HttpStatus.NO_CONTENT)

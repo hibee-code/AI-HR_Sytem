@@ -1,13 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Expose } from 'class-transformer';
-import {
-  Column,
-  Entity,
-  Index,
-  JoinColumn,
-  ManyToOne,
-  OneToOne,
-} from 'typeorm';
+import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 import { SoftDeletableEntity } from '../../../common/entities/base.entity';
 import { User } from '../../users/entities/user.entity';
 import { Department } from './department.entity';
@@ -66,7 +59,9 @@ export class Employee extends SoftDeletableEntity {
   @Column({ name: 'user_id', type: 'uuid', nullable: true })
   userId: string | null;
 
-  @OneToOne(() => User, { onDelete: 'SET NULL' })
+  // ManyToOne, not OneToOne: OneToOne adds its own unique constraint, but
+  // uniqueness is already enforced by the partial index above.
+  @ManyToOne(() => User, { onDelete: 'SET NULL' })
   @JoinColumn({ name: 'user_id' })
   user: User | null;
 

@@ -25,8 +25,14 @@ import {
   SalaryStructure,
 } from './entities/salary-structure.entity';
 import {
+  annualPaye,
+  NigeriaPayrollCalculator,
+  prorationFactor,
+} from './nigeria-payroll.calculator';
+import {
   DefaultPayrollCalculator,
   PAYROLL_CALCULATOR,
+  round2,
 } from './payroll-calculator';
 import { PayrollService } from './payroll.service';
 import { renderPayslipPdf } from './payslip-pdf';
@@ -390,6 +396,7 @@ describe('PayrollService', () => {
       roles: [],
       permissions: [PERMISSIONS.PAYROLL_READ_SELF],
       passwordChangedAt: null,
+      mfaEnabled: false,
     };
     payslips.findOne.mockResolvedValue({
       id: 'p1',
@@ -413,5 +420,108 @@ describe('PayrollService', () => {
     await expect(service.findPayslip('p1', actor)).rejects.toThrow(
       ForbiddenException,
     );
+  });
+});
+
+describe('NigeriaPayrollCalculator', () => {
+  const calc = new NigeriaPayrollCalculator();
+  const october = { start: '2026-10-01', end: '2026-10-31' };
+  const fixed = (code: string, value: number) => ({
+    code,
+    label: code,
+    type: LineType.EARNING,
+    method: LineMethod.FIXED,
+    value,
+  });
+  const ngn = (o: Partial<SalaryStructure> = {}) =>
+    structure({
+      baseAmount: 500_000,
+      lines: [fixed('HOUSING', 200_000), fixed('TRANSPORT', 100_000)],
+      ...o,
+    });
+
+  it('PAYE bands (NTA 2025): first ₦800k free, then 15/18/21/23/25%', () => {
+    expect(annualPaye(800_000)).toBe(0);
+    expect(annualPaye(3_000_000)).toBe(330_000);
+    expect(annualPaye(12_000_000)).toBe(1_950_000);
+    expect(annualPaye(60_000_000)).toBe(
+      330_000 + 1_620_000 + 2_730_000 + 5_750_000 + 2_500_000,
+    );
+  });
+
+  it('worked monthly payslip: pension 8% of BHT, NHF 2.5% of basic, annualised PAYE', () => {
+    const c = calc.calculate(ngn(), october);
+    // gross 800,000; pension 64,000; NHF 12,500; taxable 723,500 × 12 = 8,682,000
+    // PAYE = (330,000 + 18% × 5,682,000) / 12 = 112,730
+    expect(c.gross).toBe(800_000);
+    expect(c.lines.filter((l) => l.type === LineType.DEDUCTION)).toEqual([
+      expect.objectContaining({ code: 'PENSION', amount: 64_000 }),
+      expect.objectContaining({ code: 'NHF', amount: 12_500 }),
+      expect.objectContaining({ code: 'PAYE', amount: 112_730 }),
+    ]);
+    expect(c.totalDeductions).toBe(189_230);
+    expect(c.net).toBe(610_770);
+  });
+
+  it('low earners pay no PAYE but still contribute pension and NHF', () => {
+    const c = calc.calculate(ngn({ baseAmount: 60_000, lines: [] }), october);
+    expect(c.lines.find((l) => l.code === 'PAYE')?.amount).toBe(0);
+    expect(c.net).toBe(60_000 - 4_800 - 1_500);
+  });
+
+  it('pro-rates a mid-month joiner (base and fixed allowances)', () => {
+    const c = calc.calculate(ngn(), october, {
+      hireDate: '2026-10-17', // 15 of 31 days
+      terminationDate: null,
+    });
+    expect(c.baseAmount).toBe(round2((500_000 * 15) / 31));
+    expect(c.gross).toBe(round2((800_000 * 15) / 31));
+    expect(c.lines[0].label).toBe('Base pay (pro-rated 48%)');
+    expect(
+      prorationFactor(october, {
+        hireDate: '2026-11-01',
+        terminationDate: null,
+      }),
+    ).toBe(0);
+    expect(
+      prorationFactor(october, {
+        hireDate: '2020-01-01',
+        terminationDate: '2026-10-10',
+      }),
+    ).toBeCloseTo(10 / 31);
+  });
+
+  it("a structure's own PENSION line wins over the computed one", () => {
+    const c = calc.calculate(
+      ngn({
+        lines: [
+          fixed('HOUSING', 200_000),
+          fixed('TRANSPORT', 100_000),
+          {
+            code: 'PENSION',
+            label: 'Pension (voluntary 10%)',
+            type: LineType.DEDUCTION,
+            method: LineMethod.PERCENT_OF_BASE,
+            value: 10,
+          },
+        ],
+      }),
+      october,
+    );
+    const pension = c.lines.filter((l) => l.code === 'PENSION');
+    expect(pension).toHaveLength(1);
+    expect(pension[0].amount).toBe(50_000);
+  });
+
+  it('a legacy TAX line counts as PAYE (no double taxation)', () => {
+    const c = calc.calculate(structure({ baseAmount: 600_000 }), october);
+    // own PENSION 8% of base, own TAX 10% of gross; only NHF is added
+    expect(c.lines.filter((l) => l.code === 'PAYE')).toHaveLength(0);
+    expect(c.lines.find((l) => l.code === 'NHF')?.amount).toBe(15_000);
+  });
+
+  it('non-NGN structures get contractual pay only', () => {
+    const c = calc.calculate(ngn({ currency: 'USD' }), october);
+    expect(c.lines.some((l) => l.code === 'PAYE')).toBe(false);
   });
 });

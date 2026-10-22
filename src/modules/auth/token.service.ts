@@ -24,6 +24,9 @@ export interface ClientMeta {
   ipAddress?: string;
 }
 
+/** Window between a correct password and the MFA code. */
+export const MFA_CHALLENGE_TTL_SECONDS = 300;
+
 const ONE_TIME_TOKEN_TTL_MS: Record<OneTimeTokenType, number> = {
   [OneTimeTokenType.INVITE]: 7 * 24 * 60 * 60 * 1000,
   [OneTimeTokenType.PASSWORD_RESET]: 60 * 60 * 1000,
@@ -119,6 +122,35 @@ export class TokenService {
     return this.jwt.verifyAsync<AccessTokenPayload>(token, {
       secret: this.config.get('JWT_ACCESS_SECRET', { infer: true }),
     });
+  }
+
+  // ── MFA challenge (password OK, code pending) ─────────────────────────
+
+  /**
+   * Signed with the *refresh* secret and tagged, so it can never pass as an
+   * access token (JwtAuthGuard verifies with the access secret).
+   */
+  issueMfaChallenge(userId: string): Promise<string> {
+    return this.jwt.signAsync(
+      { sub: userId, typ: 'mfa' },
+      {
+        secret: this.config.get('JWT_REFRESH_SECRET', { infer: true }),
+        expiresIn: MFA_CHALLENGE_TTL_SECONDS,
+      },
+    );
+  }
+
+  async verifyMfaChallenge(token: string): Promise<string> {
+    try {
+      const p = await this.jwt.verifyAsync<{ sub: string; typ?: string }>(
+        token,
+        { secret: this.config.get('JWT_REFRESH_SECRET', { infer: true }) },
+      );
+      if (p.typ !== 'mfa') throw new Error('wrong token type');
+      return p.sub;
+    } catch {
+      throw new UnauthorizedException('MFA session expired; log in again');
+    }
   }
 
   private async issuePair(

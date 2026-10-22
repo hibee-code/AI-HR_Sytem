@@ -35,4 +35,12 @@ describe('permissions catalogue', () => {
     expect(employee).not.toContain(PERMISSIONS.USER_INVITE);
     expect(employee).not.toContain(PERMISSIONS.ROLE_MANAGE);
   });
+
+  it('only ADMIN reads the audit trail', () => {
+    for (const [name, def] of Object.entries(SYSTEM_ROLE_DEFINITIONS)) {
+      expect(def.permissions.includes(PERMISSIONS.AUDIT_READ)).toBe(
+        name === SYSTEM_ROLES.ADMIN,
+      );
+    }
+  });
 });

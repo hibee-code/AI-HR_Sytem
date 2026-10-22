@@ -1,0 +1,21 @@
+{
+	email {$ACME_EMAIL}
+}
+
+# Certificates are issued and renewed automatically (Let's Encrypt).
+# DOMAIN=localhost gives a locally trusted cert for smoke tests.
+{$DOMAIN} {
+	reverse_proxy app:3000 {
+		# Stream SSE (/ai/assistant/chat/stream) token by token, unbuffered.
+		flush_interval -1
+	}
+
+	header {
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

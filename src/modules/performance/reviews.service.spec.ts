@@ -26,6 +26,7 @@ const actor = (o: Partial<AuthUser> = {}): AuthUser => ({
   roles: [],
   permissions: [PERMISSIONS.REVIEW_READ_SELF],
   passwordChangedAt: null,
+  mfaEnabled: false,
   ...o,
 });
 const MANAGER = actor({

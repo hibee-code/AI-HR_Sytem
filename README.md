@@ -12,11 +12,12 @@ documents, resume screening), built on NestJS + PostgreSQL/pgvector + Redis/Bull
 | Cache / queues  | Redis 7, BullMQ                                          |
 | File storage    | Cloudinary                                               |
 | Notifications   | Slack bot + SMTP email (queue-driven)                    |
-| AI              | LangChain + Hugging Face (embeddings, inference), RAG    |
+| AI              | RAG: Hugging Face embeddings + Claude (Haiku 5.5) with HF/OpenAI fallback; SSE streaming |
 | Auth            | JWT access + rotating refresh tokens, permission-based RBAC |
 | Docs            | Swagger at `/api/docs` (non-production)                  |
 | Logging         | pino (JSON in prod, pretty in dev), `X-Correlation-Id`   |
-| Tests           | Jest (unit) + Jest/supertest (e2e)                       |
+| Tests           | Jest (unit) + Jest/supertest (e2e), GitHub Actions CI    |
+| Edge / TLS      | Caddy (automatic Let's Encrypt) in `docker-compose.prod.yml` |
 
 ## Quick start
 
@@ -27,9 +28,23 @@ cp .env.example .env            # then edit secrets (see comments in the file)
 docker compose --profile dev up -d postgres redis mailpit
 npm install
 npm run migration:run
-npm run seed                    # dev data (roles, admin user, ...)
+npm run seed                    # roles, admin user, departments, leave policy
+npm run seed:demo               # optional: a demo company to click through (see below)
 npm run start:dev
 ```
+
+### Demo company & API collection
+
+`npm run seed:demo` creates ~10 people across every role (CEO → managers → reports, one new
+joiner still onboarding), Nigerian salary structures, an approved and a pending leave request, a
+company leave policy (indexed for the AI assistant once the API's workers run) and an open
+Backend Engineer job. Logins are `<key>@demo.local` (`hr@`, `eng@`, `dev1@`, `rec@`, …) with
+`DEMO_PASSWORD`. Idempotent; refuses to run in production.
+
+`npm run postman` (with the API running) regenerates `postman/` from the live OpenAPI spec:
+import the collection and the *local demo* environment, run a request in **0 · Sign in** and
+every other request reuses that token. Logins that hit MFA store the challenge for
+**Verify MFA code**.
 
 - API: <http://localhost:3000/api/v1>
 - Swagger: <http://localhost:3000/api/docs>
@@ -50,12 +65,15 @@ docker compose --profile full up --build
 | `npm run start:dev`          | Watch mode                                                |
 | `npm run build` / `start:prod` | Compile to `dist/` and run                              |
 | `npm test` / `test:cov`      | Unit tests                                                |
-| `npm run test:e2e`           | e2e tests (needs Postgres + Redis from compose)           |
+| `npm run test:e2e:docker`    | Throwaway Postgres + Redis → migrations (run, drift check, revert all, rerun) → e2e suite → teardown. `KEEP_INFRA=1` keeps the containers; `SKIP_MIGRATION_CHECKS=1` for quick reruns. Plain `test:e2e` refuses to run outside it, so it can never touch a real database |
 | `npm run migration:generate -- src/database/migrations/Name` | Diff entities → new migration |
 | `npm run migration:run` / `migration:revert` / `migration:show` | Apply / roll back / list    |
 | `npm run migration:run:prod` | Same, against compiled `dist/` (used by the container)    |
 | `npm run seed`               | Idempotent dev seeders (refuses in production)            |
-| `npm run seed:catalogue`     | Sync roles/permissions only — safe for production, run after deploy |
+| `npm run seed:demo`          | Demo company (dev only)                                    |
+| `npm run seed:catalogue`     | Sync roles/permissions only — safe for production (runs on every deploy) |
+| `npm run seed:admin`         | Production: create the first ADMIN from `SEED_ADMIN_*` (skips if it exists) |
+| `npm run postman`            | Regenerate the Postman collection from the running API     |
 | `npm run lint` / `format`    | oxlint / prettier                                         |
 
 > Tests run Jest with `--experimental-vm-modules` because NestJS 12 ships as ESM and is
@@ -99,9 +117,28 @@ Conventions:
   Roles are seeded bundles of permissions (`src/modules/rbac/permissions.catalogue.ts`);
   custom roles can be created via `POST /roles`.
 - **Secrets at rest.** Passwords: argon2id. Refresh / one-time tokens: SHA-256 hashes only.
+  TOTP seeds: AES-256-GCM (`MFA_ENCRYPTION_KEY`). Recovery codes: SHA-256, single use.
+- **MFA (TOTP).** `POST /auth/mfa/setup` returns a seed and `otpauth://` URI (render as a QR
+  code); `POST /auth/mfa/enable {code}` confirms it and returns 10 recovery codes once. With MFA
+  on, `POST /auth/login` answers `{ mfaRequired: true, mfaToken }` (5-minute challenge, useless as
+  an access token) and `POST /auth/mfa/verify {mfaToken, code}` finishes with the token pair.
+  Codes can't be replayed. Roles in `MFA_REQUIRED_ROLES` (default ADMIN, HR_MANAGER) get
+  `403 MFA_SETUP_REQUIRED` everywhere except `/auth/me` (`mfaSetupRequired: true`), MFA setup,
+  password change and logout until they enrol. Lost device: `POST /users/:id/mfa/reset`.
+- **Lockout.** `LOGIN_MAX_ATTEMPTS` failed passwords or MFA codes lock the account for
+  `LOGIN_LOCKOUT_MINUTES` (`423 ACCOUNT_LOCKED`, checked before the password). The counter is
+  updated atomically in SQL and resets on success; `POST /users/:id/unlock` clears it.
+- **Audit trail** (`GET /audit-logs`, ADMIN only, filter by actor / action / resource / dates):
+  logins, failures, lockouts, MFA changes, invites, role and status changes, employee
+  create/update/transfer/terminate, salary structures (create *and* view), payroll run
+  transitions, payslip views, every document / résumé download. One `@Audit('action',
+  'resource')` decorator per route plus a global interceptor; only whitelisted body fields (or
+  just the *names* of edited fields) are kept, never values like passwords. A database trigger
+  makes `audit_logs` append-only.
 
 Seeded roles: `ADMIN`, `HR_MANAGER`, `MANAGER`, `EMPLOYEE`, `RECRUITER`.
-Bootstrap admin comes from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (`npm run seed`).
+Bootstrap admin comes from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (`npm run seed`, or
+`npm run seed:admin` in production).
 
 ## Employees & organisation
 
@@ -238,9 +275,16 @@ Bootstrap admin comes from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (`npm run 
   `PAYSLIP_AVAILABLE` email that deliberately carries no amounts. Non-draft runs can't overlap.
 - **Employees** see their own structures and payslips from approved/paid runs
   (`GET /payroll/payslips/me`, `/payroll/payslips/:id` → `documentId` → `/documents/:id/download`).
-- **Extensibility**: the calculation is behind the `PAYROLL_CALCULATOR` token
-  (`src/modules/payroll/payroll-calculator.ts`). The default is deliberately naive — no tax bands,
-  statutory rules or pro-rating. Bind your own implementation in `PayrollModule` to replace it.
+- **Nigerian statutory pay** (`PAYROLL_CALCULATOR=nigeria`, default;
+  `src/modules/payroll/nigeria-payroll.calculator.ts`): contractual lines, then employee pension
+  8% of basic + `HOUSING` + `TRANSPORT`, NHF 2.5% of basic, and PAYE on the Nigeria Tax Act 2025
+  bands (first ₦800k free, then 15/18/21/23/25%), annualising the period's taxable pay
+  (gross − pension − NHF). A structure's own `PENSION`, `NHF` or `PAYE`/`TAX` line wins over the
+  computed one, so nothing is deducted twice. Joiners and leavers are included in every run that
+  overlaps their employment and pro-rated by calendar days. All rates live in
+  `NIGERIA_STATUTORY` — **have finance confirm them before each tax year**. Not modelled yet:
+  rent relief, NHIS and life-assurance reliefs, cumulative (year-to-date) PAYE, employer costs
+  (10% pension, NSITF) on reports. `simple` = contractual lines only.
 
 ## AI knowledge base & assistant
 
@@ -254,16 +298,30 @@ Bootstrap admin comes from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (`npm run 
 - **Retrieval**: cosine top-k (`AI_RETRIEVAL_TOP_K`) over pgvector, dropping hits below
   `AI_SIMILARITY_FLOOR`. If nothing qualifies the assistant answers "not found" **without calling a
   model** — no hallucinated policy, no cost.
+- **Streaming** (`POST /ai/assistant/chat/stream`): the same answer as server-sent events —
+  `meta` {conversationId, citations} → `delta` {text}… → `done` {full result} or `error`. Read it
+  with `fetch()` and a stream reader (EventSource can't POST). Refusals that happen before the
+  stream starts (not your conversation, daily cap) are ordinary JSON errors. The provider chain
+  falls back until one produces its first token; Caddy is configured not to buffer it.
+- **Limits & cost**: `AI_DAILY_MESSAGE_LIMIT` model-backed questions per user per UTC day
+  (`429 AI_DAILY_LIMIT`; `GET /ai/usage/me` → `{used, limit}`). Every model call — assistant and
+  résumé screening — is logged to `ai_usage` with tokens and an estimated USD cost from list
+  prices (`src/infrastructure/ai/pricing.ts`); `GET /ai/usage` (`ai:read_usage`) reports per
+  day / feature / model.
 - **Answering** (`POST /ai/assistant/chat`): the last 8 turns of the conversation plus the retrieved
   excerpts go to the chat model with a grounding system prompt; answers cite excerpts as `[n]`, and
   only cited excerpts are returned as `citations`. Conversations are persisted per user
   (`/ai/assistant/conversations`).
-- **Provider fallback chain**: `AI_CHAT_PROVIDERS` orders `huggingface`, `anthropic`, `openai`.
+- **Provider fallback chain**: `AI_CHAT_PROVIDERS` orders `anthropic`, `huggingface`, `openai`.
   Providers without credentials are skipped; a provider that errors (network, rate limit, auth,
   5xx, refusal, empty output) is put on a 60 s cooldown and the next one answers. Only when every
   provider fails does the endpoint return 503. Each SDK lives in its own adapter behind the
-  `ChatModel` port (`src/infrastructure/ai/`); the Anthropic adapter uses `claude-opus-5` with
-  adaptive thinking and the server-side refusal fallback.
+  `ChatModel` port (`src/infrastructure/ai/`). The Anthropic adapter defaults to
+  `claude-haiku-5-5` and shapes each request to the model: adaptive thinking and
+  `ANTHROPIC_EFFORT` on 4.6+ models, the server-side refusal fallback only on Opus 5.x / Sonnet 5.5 /
+  Fable 5.1, none of these on Haiku 4.5 and older. A refusal, a `max_tokens` cut-off or empty output
+  throws, so the chain moves to the next provider. Thinking tokens count against
+  `AI_MAX_OUTPUT_TOKENS`.
 - **Embeddings** come from the Hugging Face Inference API (`HF_EMBEDDING_MODEL`, 384 dims). The
   pgvector column is sized by the migration; switching to a model with a different dimension needs a
   migration plus a full reindex.
@@ -293,6 +351,23 @@ Bootstrap admin comes from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (`npm run 
 - With `AI_DRIVER=fake` the screener is deterministic (keyword coverage of the requirements), which
   the e2e suite relies on.
 
+## Production deploy (single VPS)
+
+```bash
+# DNS: point DOMAIN at the server; open ports 80 and 443.
+cp .env.example .env    # NODE_ENV=production, DOMAIN, ACME_EMAIL, strong DB/Redis/JWT/MFA secrets,
+                        # Cloudinary, SMTP, Anthropic + Hugging Face keys
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml exec app npm run seed:admin   # first ADMIN, once
+```
+
+Caddy terminates TLS (Let's Encrypt, auto-renewed) and is the only service with published ports;
+Postgres and Redis (password-protected, AOF on) live on the internal network. Each app start runs
+pending migrations and syncs the permission catalogue before serving; a failed migration stops the
+deploy. The first ADMIN must enrol in MFA at first login. Production boot refuses dev-only
+settings (`STORAGE_DRIVER=memory`, `AI_DRIVER=fake`, `CORS_ORIGINS=*`, `THROTTLE_ENABLED=false`).
+Still on you: database backups (`pg_dump` off-box, tested restores), monitoring, log shipping.
+
 ## Environment variables
 
 See [`.env.example`](.env.example) — every variable is documented there and validated at boot.
@@ -312,3 +387,4 @@ See [`.env.example`](.env.example) — every variable is documented there and va
 | 8 | Payroll (stub)                          | ✅     |
 | 9 | AI knowledge base + RAG assistant       | ✅     |
 | 10| AI resume screening                     | ✅     |
+| 11| Production hardening: prod compose + TLS, audit trail, MFA + lockout, Nigerian payroll, AI caps/cost/streaming, demo seed, Postman, CI | ✅ |

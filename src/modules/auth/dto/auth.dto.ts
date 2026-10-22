@@ -77,3 +77,49 @@ export class TokenPairResponse {
   expiresIn: number;
   @ApiProperty({ default: 'Bearer' }) tokenType: 'Bearer';
 }
+
+/** Login can stop at a second-factor challenge; check `mfaRequired` first. */
+export class LoginResponse {
+  @ApiProperty() mfaRequired: boolean;
+  @ApiProperty({ required: false, description: 'Present when mfaRequired' })
+  mfaToken?: string;
+  @ApiProperty({ required: false }) accessToken?: string;
+  @ApiProperty({ required: false }) refreshToken?: string;
+  @ApiProperty({
+    description: 'Seconds until the access token (or MFA challenge) expires',
+  })
+  expiresIn: number;
+  @ApiProperty({ required: false, default: 'Bearer' }) tokenType?: 'Bearer';
+}
+
+export class MfaCodeDto {
+  @ApiProperty({
+    example: '123456',
+    description: '6-digit authenticator code, or a recovery code',
+  })
+  @IsString()
+  @MinLength(6)
+  @MaxLength(20)
+  code: string;
+}
+
+export class MfaVerifyDto extends MfaCodeDto {
+  @ApiProperty({ description: 'mfaToken returned by /auth/login' })
+  @IsString()
+  @MaxLength(1024)
+  mfaToken: string;
+}
+
+export class MfaSetupResponse {
+  @ApiProperty({ description: 'Base32 seed for manual entry' }) secret: string;
+  @ApiProperty({ description: 'otpauth:// URI — render as a QR code' })
+  otpauthUrl: string;
+}
+
+export class MfaEnabledResponse {
+  @ApiProperty({
+    type: [String],
+    description: 'Shown once. Each works a single time if the device is lost.',
+  })
+  recoveryCodes: string[];
+}

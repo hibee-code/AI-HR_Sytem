@@ -69,6 +69,11 @@ export const envSchema = z.object({
     .default('0 8 * * *'),
 
   // ── Rate limiting ─────────────────────────────────────────────────────
+  /** false only for the e2e suite (every request shares one IP); refused in production. */
+  THROTTLE_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
   THROTTLE_TTL_MS: z.coerce.number().int().positive().default(60_000),
   THROTTLE_LIMIT: z.coerce.number().int().positive().default(100),
 
@@ -78,11 +83,29 @@ export const envSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(32, 'must be at least 32 characters'),
   JWT_REFRESH_TTL: duration.default('7d'),
 
+  // ── MFA & lockout ─────────────────────────────────────────────────────
+  /** Encrypts TOTP seeds at rest. Changing it invalidates every enrolled authenticator. */
+  MFA_ENCRYPTION_KEY: z.string().min(32, 'must be at least 32 characters'),
+  /** Roles that must enrol in MFA before using the API (comma-separated; empty = none). */
+  MFA_REQUIRED_ROLES: z
+    .string()
+    .default('ADMIN,HR_MANAGER')
+    .transform((s) =>
+      s
+        .split(',')
+        .map((r) => r.trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  LOGIN_MAX_ATTEMPTS: z.coerce.number().int().min(3).max(20).default(5),
+  LOGIN_LOCKOUT_MINUTES: z.coerce.number().int().min(1).max(1440).default(15),
+
   // ── Payroll ───────────────────────────────────────────────────────────
   PAYROLL_CURRENCY: z
     .string()
     .regex(/^[A-Z]{3}$/, 'ISO 4217 code')
     .default('NGN'),
+  /** nigeria = PAYE/pension/NHF + pro-rating; simple = contractual lines only. */
+  PAYROLL_CALCULATOR: z.enum(['nigeria', 'simple']).default('nigeria'),
 
   // ── Seeding (dev only) ────────────────────────────────────────────────
   SEED_ADMIN_EMAIL: z.email().default('admin@example.com'),
@@ -124,13 +147,17 @@ export const envSchema = z.object({
   EMBEDDING_DIMENSIONS: z.coerce.number().int().min(8).max(4096).default(384),
   HF_CHAT_MODEL: z.string().default('mistralai/Mistral-7B-Instruct-v0.3'),
   ANTHROPIC_API_KEY: z.string().optional(),
-  ANTHROPIC_MODEL: z.string().default('claude-opus-5'),
+  ANTHROPIC_MODEL: z.string().default('claude-haiku-5-5'),
+  /** Thinking depth / token spend; ignored by pre-4.6 models (e.g. Haiku 4.5). */
+  ANTHROPIC_EFFORT: z
+    .enum(['low', 'medium', 'high', 'xhigh', 'max'])
+    .default('medium'),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default('gpt-4o'),
   /** Fallback order; unconfigured providers are skipped. */
   AI_CHAT_PROVIDERS: z
     .string()
-    .default('huggingface,anthropic,openai')
+    .default('anthropic,huggingface,openai')
     .transform((s) =>
       s
         .split(',')
@@ -143,7 +170,9 @@ export const envSchema = z.object({
     .int()
     .min(256)
     .max(16000)
-    .default(4096),
+    .default(8192),
+  /** Assistant questions (model calls) per user per UTC day; 0 = unlimited. */
+  AI_DAILY_MESSAGE_LIMIT: z.coerce.number().int().min(0).default(50),
   /** Chunks below this cosine similarity are ignored (0–1). */
   AI_SIMILARITY_FLOOR: z.coerce.number().min(0).max(1).default(0.25),
   AI_RETRIEVAL_TOP_K: z.coerce.number().int().min(1).max(20).default(6),
@@ -172,6 +201,22 @@ export function validateEnv(raw: Record<string, unknown>): Env {
   ) {
     throw new Error(
       'Invalid environment configuration:\n  - CLOUDINARY_*: required when STORAGE_DRIVER=cloudinary (use STORAGE_DRIVER=memory for local dev without an account)',
+    );
+  }
+  if (d.NODE_ENV === 'production') {
+    const devOnly = [
+      d.STORAGE_DRIVER === 'memory' &&
+        'STORAGE_DRIVER: "memory" loses every upload on restart',
+      d.AI_DRIVER === 'fake' && 'AI_DRIVER: "fake" returns canned answers',
+    ].filter(Boolean);
+    if (devOnly.length)
+      throw new Error(
+        `Invalid environment configuration:\n${devOnly.map((m) => `  - ${m}; not allowed in production`).join('\n')}`,
+      );
+  }
+  if (d.NODE_ENV === 'production' && !d.THROTTLE_ENABLED) {
+    throw new Error(
+      'Invalid environment configuration:\n  - THROTTLE_ENABLED: rate limiting cannot be disabled in production',
     );
   }
   if (

@@ -37,6 +37,7 @@ import {
 } from './dto/employee.dto';
 import { Employee, SERIALIZE_FULL } from './entities/employee.entity';
 import { EmployeesService } from './employees.service';
+import { Audit } from '../audit/audit.decorator';
 
 /**
  * Visibility rules (see Employee entity's serialisation groups):
@@ -60,6 +61,7 @@ export class EmployeesController {
     return full(await this.requireOwnProfile(actor));
   }
 
+  @Audit('employee.update_self', 'employee', { fields: true })
   @Patch('me')
   @RequirePermissions(PERMISSIONS.EMPLOYEE_READ_SELF)
   @ApiOperation({ summary: 'Update my contact details' })
@@ -163,6 +165,9 @@ export class EmployeesController {
 
   // ── HR operations ─────────────────────────────────────────────────────
 
+  @Audit('employee.create', 'employee', {
+    bodyKeys: ['departmentId', 'managerId', 'hireDate'],
+  })
   @Post()
   @RequirePermissions(PERMISSIONS.EMPLOYEE_CREATE)
   @ApiOperation({
@@ -172,6 +177,7 @@ export class EmployeesController {
     return full(await this.employees.create(dto, actor.id));
   }
 
+  @Audit('employee.update', 'employee', { fields: true })
   @Patch(':id')
   @RequirePermissions(PERMISSIONS.EMPLOYEE_UPDATE)
   @ApiOperation({ summary: 'Update profile fields (not org placement)' })
@@ -182,6 +188,15 @@ export class EmployeesController {
     return full(await this.employees.updateProfile(id, dto));
   }
 
+  @Audit('employee.assignment.change', 'employee', {
+    bodyKeys: [
+      'changeType',
+      'departmentId',
+      'positionId',
+      'managerId',
+      'effectiveDate',
+    ],
+  })
   @Post(':id/assignments')
   @RequirePermissions(PERMISSIONS.EMPLOYEE_UPDATE)
   @ApiOperation({
@@ -195,6 +210,9 @@ export class EmployeesController {
     return full(await this.employees.changeAssignment(id, dto, actor.id));
   }
 
+  @Audit('employee.status.change', 'employee', {
+    bodyKeys: ['status', 'effectiveDate'],
+  })
   @Put(':id/status')
   @RequirePermissions(PERMISSIONS.EMPLOYEE_UPDATE)
   @ApiOperation({ summary: 'ONBOARDING→ACTIVE, ACTIVE↔ON_LEAVE' })
@@ -206,6 +224,7 @@ export class EmployeesController {
     return full(await this.employees.changeStatus(id, dto, actor.id));
   }
 
+  @Audit('employee.terminate', 'employee', { bodyKeys: ['terminationDate'] })
   @Post(':id/terminate')
   @RequirePermissions(PERMISSIONS.EMPLOYEE_DELETE)
   @ApiOperation({ summary: 'End employment; reports move up, login suspended' })
@@ -217,6 +236,7 @@ export class EmployeesController {
     return full(await this.employees.terminate(id, dto, actor.id));
   }
 
+  @Audit('employee.link_user', 'employee', { bodyKeys: ['userId'] })
   @Post(':id/link-user')
   @RequirePermissions(PERMISSIONS.EMPLOYEE_UPDATE)
   @ApiOperation({ summary: 'Attach an existing login to this employee' })

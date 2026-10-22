@@ -26,6 +26,7 @@ describe('Leave & attendance (e2e)', () => {
   let employeeToken: string;
   let employeeId: string;
   let annualTypeId: string;
+  let unpaidTypeId: string;
   const auth = (t: string) => ({ Authorization: `Bearer ${t}` });
 
   const hire = async (body: Record<string, unknown>, roles: string[]) => {
@@ -93,6 +94,7 @@ describe('Leave & attendance (e2e)', () => {
         .expect(200)
     ).body;
     annualTypeId = types.find((t: { code: string }) => t.code === 'ANNUAL').id;
+    unpaidTypeId = types.find((t: { code: string }) => t.code === 'UNPAID').id;
   });
 
   afterAll(async () => {
@@ -293,13 +295,15 @@ describe('Leave & attendance (e2e)', () => {
     });
 
     it('long leave approved by HR while in progress flips status to ON_LEAVE', async () => {
+      // ON_LEAVE needs ≥ 30 calendar days, which is more annual leave than
+      // the 20-day entitlement — a long unpaid leave is the realistic case.
       const start = addDays(monday, -14); // already started
       const res = await http()
         .post(`${BASE}/leave/requests/on-behalf`)
         .set(auth(admin))
         .send({
           employeeId,
-          leaveTypeId: annualTypeId,
+          leaveTypeId: unpaidTypeId,
           startDate: start,
           endDate: addDays(start, 34),
         })

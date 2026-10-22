@@ -1,8 +1,10 @@
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { ALLOW_WITHOUT_MFA_KEY } from '../../../common/decorators/allow-without-mfa.decorator';
 import { IS_PUBLIC_KEY } from '../../../common/decorators/public.decorator';
 import { RbacService } from '../../rbac/rbac.service';
 import { UserStatus } from '../../users/entities/user.entity';
+import { MfaService } from '../mfa.service';
 import { TokenService } from '../token.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
@@ -29,6 +31,7 @@ const activeUser = {
   roles: ['EMPLOYEE'],
   permissions: [],
   passwordChangedAt: null as number | null,
+  mfaEnabled: false,
 };
 
 describe('JwtAuthGuard', () => {
@@ -45,6 +48,10 @@ describe('JwtAuthGuard', () => {
       reflector,
       tokens as unknown as TokenService,
       rbac as unknown as RbacService,
+      // MFA mandatory for ADMIN in these tests.
+      {
+        isRequiredFor: (roles: string[]) => roles.includes('ADMIN'),
+      } as unknown as MfaService,
     );
 
   it('lets @Public() routes through without a token', async () => {
@@ -132,5 +139,42 @@ describe('JwtAuthGuard', () => {
     });
     const { reflector, context } = ctx({ authorization: 'Bearer good' });
     await expect(guard(reflector).canActivate(context)).resolves.toBe(true);
+  });
+
+  describe('mandatory MFA', () => {
+    const admin = { ...activeUser, roles: ['ADMIN'] };
+    beforeEach(() =>
+      tokens.verifyAccessToken.mockResolvedValue({ sub: 'u1', email: 'a@b.c' }),
+    );
+
+    it('blocks an un-enrolled admin with MFA_SETUP_REQUIRED', async () => {
+      rbac.getAuthUser.mockResolvedValue(admin);
+      const { reflector, context } = ctx({ authorization: 'Bearer good' });
+      await expect(guard(reflector).canActivate(context)).rejects.toMatchObject(
+        { response: { error: 'MFA_SETUP_REQUIRED' } },
+      );
+    });
+
+    it('lets them reach @AllowWithoutMfa() routes (setup, me, logout)', async () => {
+      rbac.getAuthUser.mockResolvedValue(admin);
+      const { reflector, context } = ctx(
+        { authorization: 'Bearer good' },
+        { [ALLOW_WITHOUT_MFA_KEY]: true },
+      );
+      await expect(guard(reflector).canActivate(context)).resolves.toBe(true);
+    });
+
+    it('passes once enrolled, and never applies to other roles', async () => {
+      rbac.getAuthUser.mockResolvedValue({ ...admin, mfaEnabled: true });
+      const a = ctx({ authorization: 'Bearer good' });
+      await expect(guard(a.reflector).canActivate(a.context)).resolves.toBe(
+        true,
+      );
+      rbac.getAuthUser.mockResolvedValue(activeUser);
+      const b = ctx({ authorization: 'Bearer good' });
+      await expect(guard(b.reflector).canActivate(b.context)).resolves.toBe(
+        true,
+      );
+    });
   });
 });

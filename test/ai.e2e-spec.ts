@@ -196,6 +196,71 @@ describe('AI knowledge base & assistant (e2e, fake driver)', () => {
       .expect(403);
   });
 
+  it('streams the answer as server-sent events and counts it against the daily cap', async () => {
+    const before = (
+      await http()
+        .get(`${BASE}/ai/usage/me`)
+        .set(auth(employeeToken))
+        .expect(200)
+    ).body;
+    const res = await http()
+      .post(`${BASE}/ai/assistant/chat/stream`)
+      .set(auth(employeeToken))
+      .send({ message: 'How many annual leave days do I get per year?' })
+      .buffer(true)
+      .parse((r, cb) => {
+        let body = '';
+        r.on('data', (c: Buffer) => (body += c.toString()));
+        r.on('end', () => cb(null, body));
+      })
+      .expect(200)
+      .expect('Content-Type', /text\/event-stream/);
+
+    const events = (res.body as string)
+      .trim()
+      .split('\n\n')
+      .map((block) => {
+        const [, type] = /^event: (\w+)/m.exec(block)!;
+        const [, data] = /^data: (.*)$/m.exec(block)!;
+        return { type, data: JSON.parse(data) };
+      });
+    expect(events[0]).toMatchObject({
+      type: 'meta',
+      data: { conversationId: expect.any(String) },
+    });
+    const done = events.at(-1)!;
+    expect(done.type).toBe('done');
+    expect(done.data).toMatchObject({ grounded: true, provider: 'fake' });
+    const streamed = events
+      .filter((e) => e.type === 'delta')
+      .map((e) => e.data.text)
+      .join('');
+    expect(streamed).toBe(done.data.answer);
+
+    const after = (
+      await http()
+        .get(`${BASE}/ai/usage/me`)
+        .set(auth(employeeToken))
+        .expect(200)
+    ).body;
+    expect(after).toEqual({ used: before.used + 1, limit: 50 });
+  });
+
+  it('HR sees token / cost totals; employees cannot', async () => {
+    const rows = (
+      await http().get(`${BASE}/ai/usage`).set(auth(admin)).expect(200)
+    ).body;
+    expect(rows).toContainEqual(
+      expect.objectContaining({
+        feature: 'assistant',
+        provider: 'fake',
+        calls: expect.any(Number),
+        costUsd: null, // no list price for the fake model
+      }),
+    );
+    await http().get(`${BASE}/ai/usage`).set(auth(employeeToken)).expect(403);
+  });
+
   it('unrelated questions get the not-found answer without a model call', async () => {
     const res = (
       await http()

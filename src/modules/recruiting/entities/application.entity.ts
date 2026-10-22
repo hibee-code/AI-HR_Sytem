@@ -40,6 +40,7 @@ export interface ScreeningResult {
   provider: string;
   model: string;
   screenedAt: string;
+  usage?: { inputTokens: number; outputTokens: number };
 }
 
 @Entity({ name: 'applications' })

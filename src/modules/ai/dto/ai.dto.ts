@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsDateString,
   IsOptional,
   IsString,
   IsUUID,
@@ -35,4 +36,16 @@ export class ReindexDto {
 
 export class SearchQueryDto {
   @ApiProperty() @IsString() @MinLength(2) @MaxLength(500) q: string;
+}
+
+export class UsageQueryDto {
+  @ApiPropertyOptional({ description: 'Default: 30 days before `to`' })
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @ApiPropertyOptional({ description: 'Default: now' })
+  @IsOptional()
+  @IsDateString()
+  to?: string;
 }

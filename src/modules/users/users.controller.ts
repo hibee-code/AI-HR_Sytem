@@ -19,6 +19,7 @@ import {
   SetUserStatusDto,
   UpdateUserDto,
 } from './dto/user.dto';
+import { Audit } from '../audit/audit.decorator';
 import { UsersService } from './users.service';
 
 /**
@@ -44,6 +45,7 @@ export class UsersController {
     return this.users.findById(id);
   }
 
+  @Audit('user.update', 'user', { fields: true })
   @Patch(':id')
   @RequirePermissions(PERMISSIONS.USER_UPDATE)
   @ApiOperation({ summary: 'Update name fields' })
@@ -51,6 +53,7 @@ export class UsersController {
     return this.users.updateProfile(id, dto);
   }
 
+  @Audit('user.roles.set', 'user', { bodyKeys: ['roles'] })
   @Put(':id/roles')
   @RequirePermissions(PERMISSIONS.USER_MANAGE_ROLES)
   @ApiOperation({ summary: 'Replace the user’s role set' })
@@ -61,6 +64,7 @@ export class UsersController {
     return this.users.setRoles(id, dto.roles);
   }
 
+  @Audit('user.status.set', 'user', { bodyKeys: ['status'] })
   @Put(':id/status')
   @RequirePermissions(PERMISSIONS.USER_SUSPEND)
   @ApiOperation({ summary: 'Suspend or reactivate a user' })

@@ -20,6 +20,7 @@
     "test:watch": "node --experimental-vm-modules --no-warnings=ExperimentalWarning node_modules/jest/bin/jest.js --watch",
     "test:cov": "node --experimental-vm-modules --no-warnings=ExperimentalWarning node_modules/jest/bin/jest.js --coverage",
     "test:e2e": "node --experimental-vm-modules --no-warnings=ExperimentalWarning node_modules/jest/bin/jest.js --config ./test/jest-e2e.json --runInBand",
+    "test:e2e:docker": "scripts/e2e-docker.sh",
     "typeorm": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js -d src/database/data-source.ts",
     "migration:generate": "npm run typeorm -- migration:generate",
     "migration:create": "ts-node ./node_modules/typeorm/cli.js migration:create",
@@ -28,7 +29,10 @@
     "migration:show": "npm run typeorm -- migration:show",
     "migration:run:prod": "node ./node_modules/typeorm/cli.js -d dist/database/data-source.js migration:run",
     "seed": "ts-node src/database/seeds/run-seed.ts",
-    "seed:catalogue": "node dist/database/seeds/run-seed.js --catalogue-only"
+    "seed:demo": "ts-node src/database/seeds/demo-seed.ts",
+    "seed:catalogue": "node dist/database/seeds/run-seed.js --catalogue-only",
+    "seed:admin": "node dist/database/seeds/run-seed.js --bootstrap-admin",
+    "postman": "node scripts/postman.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.127.0",
@@ -82,6 +86,7 @@
     "@types/pdfkit": "^0.17.6",
     "@types/supertest": "^7.0.0",
     "jest": "^30.5.1",
+    "openapi-to-postmanv2": "^6.4.0",
     "oxlint": "^1.58.0",
     "oxlint-tsgolint": "^7.0.2001",
     "pino-pretty": "^13.1.3",
