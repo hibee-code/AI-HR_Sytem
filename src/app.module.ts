@@ -11,6 +11,7 @@ import { LoggerModule } from './infrastructure/logger/logger.module';
 import { RedisThrottlerStorage } from './infrastructure/redis/redis-throttler.storage';
 import { throttleTracker } from './infrastructure/redis/throttle-tracker';
 import { RedisModule } from './infrastructure/redis/redis.module';
+import { SecurityModule } from './infrastructure/security/security.module';
 import { AiModule } from './modules/ai/ai.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { AuditModule } from './modules/audit/audit.module';
@@ -37,6 +38,7 @@ import { UsersModule } from './modules/users/users.module';
     LoggerModule,
     DatabaseModule,
     RedisModule,
+    SecurityModule,
     EventEmitterModule.forRoot({ wildcard: false, maxListeners: 20 }),
     ThrottlerModule.forRootAsync({
       imports: [RedisModule],
@@ -55,6 +57,7 @@ import { UsersModule } from './modules/users/users.module';
         storage,
         getTracker: throttleTracker(
           config.get('JWT_ACCESS_SECRET', { infer: true }),
+          config.get('JWT_ACCESS_SECRET_PREVIOUS', { infer: true }),
         ),
         skipIf: () => !config.get('THROTTLE_ENABLED', { infer: true }),
       }),

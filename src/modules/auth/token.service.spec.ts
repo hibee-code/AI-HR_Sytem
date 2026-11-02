@@ -9,7 +9,22 @@ import {
   OneTimeTokenType,
 } from './entities/one-time-token.entity';
 import { RefreshToken } from './entities/refresh-token.entity';
+import { REDIS_CLIENT } from '../../infrastructure/redis/redis.constants';
 import { TokenService, parseDuration } from './token.service';
+
+/** In-memory stand-in for the session denylist. */
+const denied = new Set<string>();
+const redis = {
+  exists: jest.fn(async (k: string) => (denied.has(k) ? 1 : 0)),
+  multi: () => {
+    const ops: string[] = [];
+    const m = {
+      set: (k: string) => (ops.push(k), m),
+      exec: async () => ops.forEach((k) => denied.add(k)),
+    };
+    return m;
+  },
+};
 
 const sha256 = (v: string) => createHash('sha256').update(v).digest('hex');
 
@@ -35,6 +50,7 @@ describe('TokenService', () => {
     findOne: jest.Mock;
     create: jest.Mock;
     update: jest.Mock;
+    exists: jest.Mock;
     manager: { transaction: jest.Mock };
   };
   let oneTimeRepo: {
@@ -56,12 +72,14 @@ describe('TokenService', () => {
       findOne: jest.fn(),
       create: jest.fn((v) => Object.assign(new RefreshToken(), v)),
       update: jest.fn(),
+      exists: jest.fn(async () => true),
       manager: {
         transaction: jest.fn(async (cb: (e: typeof em) => Promise<void>) =>
           cb(em),
         ),
       },
     };
+    denied.clear();
     oneTimeRepo = {
       findOne: jest.fn(),
       save: jest.fn(async (v) => v),
@@ -92,6 +110,7 @@ describe('TokenService', () => {
         },
         { provide: getRepositoryToken(RefreshToken), useValue: refreshRepo },
         { provide: getRepositoryToken(OneTimeToken), useValue: oneTimeRepo },
+        { provide: REDIS_CLIENT, useValue: redis },
       ],
     }).compile();
 
@@ -239,5 +258,52 @@ describe('TokenService', () => {
         service.consumeOneTime('raw', OneTimeTokenType.INVITE),
       ).rejects.toThrow(UnauthorizedException);
     });
+  });
+
+  describe('sessions', () => {
+    it('revoking a session denylists it, so its access token stops at once', async () => {
+      expect(await service.isSessionRevoked('fam-1')).toBe(false);
+      await service.revokeSession('u1', 'fam-1');
+      expect(await service.isSessionRevoked('fam-1')).toBe(true);
+      expect(await service.isSessionRevoked(undefined)).toBe(false);
+    });
+
+    it("refuses to revoke someone else's session", async () => {
+      refreshRepo.exists.mockResolvedValueOnce(false);
+      await expect(service.revokeSession('u1', 'fam-x')).rejects.toThrow(
+        /not found/i,
+      );
+    });
+  });
+});
+
+describe('TokenService key rotation', () => {
+  it('accepts tokens signed with the previous access secret during a rotation', async () => {
+    const jwt = new JwtService();
+    const [oldKey, newKey] = ['o'.repeat(32), 'n'.repeat(32)];
+    const make = (env: Record<string, string>) =>
+      new TokenService(
+        jwt,
+        {
+          get: (k: string) =>
+            ({ JWT_ACCESS_TTL: '15m', JWT_REFRESH_TTL: '7d', ...env })[k],
+        } as never,
+        {} as never,
+        {} as never,
+        redis as never,
+      );
+    const old = await jwt.signAsync(
+      { sub: 'u1', email: 'e' },
+      { secret: oldKey },
+    );
+    await expect(
+      make({ JWT_ACCESS_SECRET: newKey }).verifyAccessToken(old),
+    ).rejects.toThrow();
+    await expect(
+      make({
+        JWT_ACCESS_SECRET: newKey,
+        JWT_ACCESS_SECRET_PREVIOUS: oldKey,
+      }).verifyAccessToken(old),
+    ).resolves.toMatchObject({ sub: 'u1' });
   });
 });

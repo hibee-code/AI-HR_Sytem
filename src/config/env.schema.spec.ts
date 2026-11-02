@@ -9,6 +9,7 @@ const valid = {
   JWT_ACCESS_SECRET: 'a'.repeat(32),
   JWT_REFRESH_SECRET: 'b'.repeat(32),
   MFA_ENCRYPTION_KEY: 'c'.repeat(32),
+  FIELD_ENCRYPTION_KEY: 'f'.repeat(32),
   STORAGE_DRIVER: 'memory',
 };
 
@@ -20,6 +21,7 @@ const prodValid = {
   CLOUDINARY_CLOUD_NAME: 'c',
   CLOUDINARY_API_KEY: 'k',
   CLOUDINARY_API_SECRET: 's',
+  CLAMAV_HOST: 'clamav',
 };
 
 describe('validateEnv', () => {

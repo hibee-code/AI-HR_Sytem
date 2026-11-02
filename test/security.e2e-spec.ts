@@ -239,6 +239,105 @@ describe('Security: MFA, lockout, audit trail (e2e)', () => {
     });
   });
 
+  describe('sessions & request limits', () => {
+    it('lists devices and revokes one — its access token stops working immediately', async () => {
+      const email = 'devices@test.local';
+      await newUser(email);
+      const phone = (await login(email).expect(200)).body.accessToken;
+      const laptop = (await login(email).expect(200)).body.accessToken;
+
+      const sessions = (
+        await http().get(`${BASE}/auth/sessions`).set(auth(laptop)).expect(200)
+      ).body as { id: string; current: boolean }[];
+      expect(sessions.length).toBeGreaterThanOrEqual(2);
+      const current = sessions.find((x) => x.current)!;
+      const other = sessions.find((x) => !x.current)!;
+      expect(current).toBeDefined();
+
+      // The laptop signs the phone out; the phone's still-unexpired token dies now.
+      await http()
+        .delete(`${BASE}/auth/sessions/${other.id}`)
+        .set(auth(laptop))
+        .expect(204);
+      // the phone logged in first → it's the other (non-current) session
+      await http().get(`${BASE}/auth/me`).set(auth(phone)).expect(401);
+      await http().get(`${BASE}/auth/me`).set(auth(laptop)).expect(200);
+    });
+
+    it('rejects JSON bodies over HTTP_BODY_LIMIT with 413', async () => {
+      await http()
+        .post(`${BASE}/auth/login`)
+        .set('Content-Type', 'application/json')
+        .send(
+          JSON.stringify({
+            email: 'x@y.z',
+            password: 'p'.repeat(2 * 1024 * 1024),
+          }),
+        )
+        .expect(413);
+    });
+
+    it('answers malformed JSON with 400, not 500', async () => {
+      await http()
+        .post(`${BASE}/auth/login`)
+        .set('Content-Type', 'application/json')
+        .send('{"email": ')
+        .expect(400);
+    });
+  });
+
+  describe('field encryption at rest', () => {
+    it('stores personal data as ciphertext but returns plaintext through the API', async () => {
+      const depts = await ds.query(`SELECT id FROM departments LIMIT 1`);
+      const departmentId =
+        depts[0]?.id ??
+        (
+          await http()
+            .post(`${BASE}/departments`)
+            .set(auth(admin))
+            .send({ name: 'Security Test', code: 'SECT' })
+            .expect(201)
+        ).body.id;
+      const emp = (
+        await http()
+          .post(`${BASE}/employees`)
+          .set(auth(admin))
+          .send({
+            firstName: 'Cipher',
+            lastName: 'Text',
+            workEmail: 'cipher@test.local',
+            phone: '+234 803 555 0101',
+            dateOfBirth: '1991-02-03',
+            hireDate: '2025-01-01',
+            departmentId,
+          })
+          .expect(201)
+      ).body;
+      const [raw] = await ds.query(
+        `SELECT phone, date_of_birth FROM employees WHERE id = $1`,
+        [emp.id],
+      );
+      expect(raw.phone).toMatch(/^v1\./);
+      expect(raw.phone).not.toContain('803');
+      expect(raw.date_of_birth).not.toContain('1991');
+
+      const api = (
+        await http()
+          .get(`${BASE}/employees/${emp.id}`)
+          .set(auth(admin))
+          .expect(200)
+      ).body;
+      expect(api).toMatchObject({
+        phone: '+234 803 555 0101',
+        dateOfBirth: '1991-02-03',
+      });
+      await ds.query(`DELETE FROM employment_history WHERE employee_id = $1`, [
+        emp.id,
+      ]);
+      await ds.query(`DELETE FROM employees WHERE id = $1`, [emp.id]);
+    });
+  });
+
   describe('audit trail', () => {
     it('records logins, failures, the lock and admin actions; readable by ADMIN only', async () => {
       const res = await http()

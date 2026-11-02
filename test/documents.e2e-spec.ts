@@ -259,10 +259,14 @@ describe('Documents (e2e, memory storage)', () => {
     const res = await http()
       .put(`${BASE}/documents/profile-photo/me`)
       .set(auth(employeeToken))
-      .attach('file', Buffer.from([0x89, 0x50, 0x4e, 0x47]), {
-        filename: 'me.png',
-        contentType: 'image/png',
-      })
+      .attach(
+        'file',
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        {
+          filename: 'me.png',
+          contentType: 'image/png',
+        },
+      )
       .expect(200);
     expect(res.body.photoUrl).toMatch(/^memory:\/\/employees\//);
   });

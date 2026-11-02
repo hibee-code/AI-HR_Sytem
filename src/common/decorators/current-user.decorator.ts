@@ -14,3 +14,9 @@ export const CurrentUser = createParamDecorator(
     return field ? user[field] : user;
   },
 );
+
+/** `@CurrentSession()` — id of the caller's session (refresh-token family). */
+export const CurrentSession = createParamDecorator(
+  (_: unknown, ctx: ExecutionContext) =>
+    ctx.switchToHttp().getRequest<Request & { sessionId?: string }>().sessionId,
+);

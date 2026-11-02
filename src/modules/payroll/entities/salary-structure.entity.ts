@@ -1,7 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Column, Entity, Index, JoinColumn, ManyToOne } from 'typeorm';
 import { BaseEntity } from '../../../common/entities/base.entity';
-import { numericTransformer } from '../../../common/typeorm/numeric.transformer';
+import { encrypted } from '../../../common/security/field-encryption';
 import { Employee } from '../../employees/entities/employee.entity';
 
 export enum PayFrequency {
@@ -73,30 +73,25 @@ export class SalaryStructure extends BaseEntity {
   })
   payFrequency: PayFrequency;
 
+  // Pay figures are encrypted at rest (FIELD_ENCRYPTION_KEY); they're only
+  // ever computed in the app, never summed or filtered in SQL.
+
   /** Base pay per pay period. */
   @ApiProperty({ example: 850000 })
-  @Column({
-    name: 'base_amount',
-    type: 'numeric',
-    precision: 14,
-    scale: 2,
-    transformer: numericTransformer,
-  })
+  @Column({ name: 'base_amount', type: 'text', transformer: encrypted.number })
   baseAmount: number;
 
   @ApiProperty({ type: 'array', items: { type: 'object' } })
-  @Column({ type: 'jsonb', default: () => `'[]'` })
+  @Column({ type: 'text', transformer: encrypted.json })
   lines: StructureLine[];
 
   /** Declared annual rent (NGN) for PAYE rent relief; null = none claimed. */
   @ApiProperty({ nullable: true, example: 1_800_000 })
   @Column({
     name: 'annual_rent',
-    type: 'numeric',
-    precision: 14,
-    scale: 2,
+    type: 'text',
     nullable: true,
-    transformer: numericTransformer,
+    transformer: encrypted.number,
   })
   annualRent: number | null;
 

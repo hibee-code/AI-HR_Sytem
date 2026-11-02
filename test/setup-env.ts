@@ -17,3 +17,5 @@ process.env.LOG_LEVEL = process.env.LOG_LEVEL ?? 'fatal';
 process.env.DB_NAME = process.env.DB_TEST_NAME ?? process.env.DB_NAME;
 process.env.STORAGE_DRIVER = 'memory';
 process.env.AI_DRIVER = 'fake';
+// Fast, offline vectors for the e2e suite; the eval suite uses the real model.
+process.env.EMBEDDINGS_DRIVER ??= 'fake';

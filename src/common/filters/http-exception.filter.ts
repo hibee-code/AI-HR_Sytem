@@ -90,6 +90,26 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       }
     }
 
+    // Express middleware errors (http-errors), e.g. body-parser's 413 for an
+    // oversized body or 400 for malformed JSON: safe to show when `expose`.
+    const e = exception as {
+      status?: unknown;
+      expose?: unknown;
+      message?: unknown;
+    };
+    if (
+      typeof e?.status === 'number' &&
+      e.status >= 400 &&
+      e.status < 500 &&
+      e.expose === true
+    ) {
+      return {
+        statusCode: e.status,
+        error: HttpStatus[e.status] ?? 'Bad Request',
+        message: typeof e.message === 'string' ? e.message : 'Bad request',
+      };
+    }
+
     return {
       statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
       error: 'Internal Server Error',

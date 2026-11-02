@@ -1,11 +1,18 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { IsNull, Repository } from 'typeorm';
+import Redis from 'ioredis';
+import { IsNull, MoreThan, Repository } from 'typeorm';
 import type { AccessTokenPayload } from '../../common/auth/auth-user.interface';
 import type { Env } from '../../config/env.schema';
+import { REDIS_CLIENT } from '../../infrastructure/redis/redis.constants';
 import {
   OneTimeToken,
   OneTimeTokenType,
@@ -17,6 +24,17 @@ export interface IssuedTokens {
   refreshToken: string;
   /** seconds until the access token expires */
   expiresIn: number;
+}
+
+/** One signed-in device (a refresh-token family). */
+export interface SessionInfo {
+  id: string;
+  createdAt: Date;
+  lastUsedAt: Date;
+  expiresAt: Date;
+  userAgent: string | null;
+  ipAddress: string | null;
+  current: boolean;
 }
 
 export interface ClientMeta {
@@ -50,6 +68,7 @@ export class TokenService {
     private readonly refreshTokens: Repository<RefreshToken>,
     @InjectRepository(OneTimeToken)
     private readonly oneTimeTokens: Repository<OneTimeToken>,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {
     this.refreshTtlMs = parseDuration(
       config.get('JWT_REFRESH_TTL', { infer: true }),
@@ -112,16 +131,93 @@ export class TokenService {
 
   /** Logout everywhere (password change, suspension, "sign out all devices"). */
   async revokeAllForUser(userId: string): Promise<void> {
+    const live = await this.refreshTokens.find({
+      where: { userId, revokedAt: IsNull() },
+      select: { familyId: true },
+    });
     await this.refreshTokens.update(
       { userId, revokedAt: IsNull() },
       { revokedAt: new Date() },
     );
+    await this.denySessions([...new Set(live.map((t) => t.familyId))]);
+  }
+
+  /** The user's signed-in devices, newest activity first. */
+  async listSessions(
+    userId: string,
+    currentSid?: string,
+  ): Promise<SessionInfo[]> {
+    const live = await this.refreshTokens.find({
+      where: { userId, revokedAt: IsNull(), expiresAt: MoreThan(new Date()) },
+    });
+    const starts = new Map<string, Date>(
+      (
+        (await this.refreshTokens.query(
+          `SELECT family_id, min(created_at) AS started FROM refresh_tokens
+            WHERE user_id = $1 GROUP BY family_id`,
+          [userId],
+        )) as { family_id: string; started: Date }[]
+      ).map((r) => [r.family_id, new Date(r.started)]),
+    );
+    return live
+      .map((t) => ({
+        id: t.familyId,
+        createdAt: starts.get(t.familyId) ?? t.createdAt,
+        lastUsedAt: t.createdAt, // each refresh rotates the token
+        expiresAt: t.expiresAt,
+        userAgent: t.userAgent,
+        ipAddress: t.ipAddress,
+        current: t.familyId === currentSid,
+      }))
+      .sort((a, b) => b.lastUsedAt.getTime() - a.lastUsedAt.getTime());
+  }
+
+  /** Signs one device out; its access token stops working immediately. */
+  async revokeSession(userId: string, sessionId: string): Promise<void> {
+    const owned = await this.refreshTokens.exists({
+      where: { userId, familyId: sessionId },
+    });
+    if (!owned) throw new NotFoundException('Session not found');
+    await this.revokeFamily(sessionId);
+  }
+
+  /** Access tokens of revoked sessions are refused until they'd expire anyway. */
+  async isSessionRevoked(sid: string | undefined): Promise<boolean> {
+    return !!sid && (await this.redis.exists(denyKey(sid))) === 1;
+  }
+
+  private async denySessions(familyIds: string[]): Promise<void> {
+    if (familyIds.length === 0) return;
+    const multi = this.redis.multi();
+    for (const id of familyIds)
+      multi.set(denyKey(id), '1', 'EX', this.accessTtlSeconds);
+    await multi.exec();
   }
 
   verifyAccessToken(token: string): Promise<AccessTokenPayload> {
-    return this.jwt.verifyAsync<AccessTokenPayload>(token, {
-      secret: this.config.get('JWT_ACCESS_SECRET', { infer: true }),
-    });
+    return this.verifyWith<AccessTokenPayload>(token, [
+      this.config.get('JWT_ACCESS_SECRET', { infer: true }),
+      this.config.get('JWT_ACCESS_SECRET_PREVIOUS', { infer: true }),
+    ]);
+  }
+
+  /**
+   * Verifies with the current secret, then the previous one (set during a
+   * rotation, so tokens issued just before it keep working until expiry).
+   */
+  private async verifyWith<T extends object>(
+    token: string,
+    secrets: (string | undefined)[],
+  ): Promise<T> {
+    let lastError: unknown;
+    for (const secret of secrets.filter((s): s is string => !!s)) {
+      try {
+        return await this.jwt.verifyAsync<T>(token, { secret });
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    throw lastError;
   }
 
   // ── MFA challenge (password OK, code pending) ─────────────────────────
@@ -142,10 +238,10 @@ export class TokenService {
 
   async verifyMfaChallenge(token: string): Promise<string> {
     try {
-      const p = await this.jwt.verifyAsync<{ sub: string; typ?: string }>(
-        token,
-        { secret: this.config.get('JWT_REFRESH_SECRET', { infer: true }) },
-      );
+      const p = await this.verifyWith<{ sub: string; typ?: string }>(token, [
+        this.config.get('JWT_REFRESH_SECRET', { infer: true }),
+        this.config.get('JWT_REFRESH_SECRET_PREVIOUS', { infer: true }),
+      ]);
       if (p.typ !== 'mfa') throw new Error('wrong token type');
       return p.sub;
     } catch {
@@ -181,7 +277,11 @@ export class TokenService {
       }
     });
 
-    const payload: AccessTokenPayload = { sub: user.id, email: user.email };
+    const payload: AccessTokenPayload = {
+      sub: user.id,
+      email: user.email,
+      sid: familyId,
+    };
     const accessToken = await this.jwt.signAsync(payload, {
       secret: this.config.get('JWT_ACCESS_SECRET', { infer: true }),
       expiresIn: this.accessTtlSeconds,
@@ -195,6 +295,7 @@ export class TokenService {
       { familyId, revokedAt: IsNull() },
       { revokedAt: new Date() },
     );
+    await this.denySessions([familyId]);
   }
 
   // ── One-time tokens ───────────────────────────────────────────────────
@@ -245,6 +346,10 @@ export class TokenService {
     await this.oneTimeTokens.save(token);
     return token.userId;
   }
+}
+
+function denyKey(sid: string): string {
+  return `auth:revoked-session:${sid}`;
 }
 
 function hash(value: string): string {

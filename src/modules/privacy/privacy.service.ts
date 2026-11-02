@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
+import { decryptRow } from '../../common/security/field-encryption';
 import { DocumentsService } from '../documents/documents.service';
 
 /**
@@ -9,7 +10,7 @@ import { DocumentsService } from '../documents/documents.service';
  * exported: password hash, MFA seed/recovery codes, token hashes.
  * Add a section here whenever a new table stores personal data.
  */
-const EMPLOYEE_SECTIONS: { key: string; sql: string }[] = [
+const EMPLOYEE_SECTIONS: Section[] = [
   {
     key: 'account',
     sql: `SELECT id, email, first_name, last_name, status, mfa_enabled,
@@ -26,7 +27,11 @@ const EMPLOYEE_SECTIONS: { key: string; sql: string }[] = [
     sql: `SELECT id, created_at, expires_at, revoked_at, user_agent, ip_address
             FROM refresh_tokens WHERE user_id = @user ORDER BY created_at`,
   },
-  { key: 'employee', sql: `SELECT * FROM employees WHERE id = @emp` },
+  {
+    key: 'employee',
+    table: 'employees',
+    sql: `SELECT * FROM employees WHERE id = @emp`,
+  },
   {
     key: 'employmentHistory',
     sql: `SELECT * FROM employment_history WHERE employee_id = @emp ORDER BY effective_date`,
@@ -75,6 +80,7 @@ const EMPLOYEE_SECTIONS: { key: string; sql: string }[] = [
   { key: 'goals', sql: `SELECT * FROM goals WHERE employee_id = @emp` },
   {
     key: 'salaryStructures',
+    table: 'salary_structures',
     sql: `SELECT * FROM salary_structures WHERE employee_id = @emp`,
   },
   { key: 'payslips', sql: `SELECT * FROM payslips WHERE employee_id = @emp` },
@@ -104,7 +110,7 @@ const EMPLOYEE_SECTIONS: { key: string; sql: string }[] = [
   },
 ];
 
-const CANDIDATE_SECTIONS: { key: string; sql: string }[] = [
+const CANDIDATE_SECTIONS: Section[] = [
   { key: 'candidate', sql: `SELECT * FROM candidates WHERE id = @candidate` },
   {
     key: 'applications',
@@ -117,6 +123,13 @@ const CANDIDATE_SECTIONS: { key: string; sql: string }[] = [
            WHERE a.candidate_id = @candidate`,
   },
 ];
+
+/** `table` = decrypt that table's encrypted columns (see ENCRYPTED_COLUMNS). */
+interface Section {
+  key: string;
+  sql: string;
+  table?: string;
+}
 
 /**
  * `@name` markers → `$1…$n`, passing only the values a query uses (Postgres
@@ -203,12 +216,16 @@ export class PrivacyService {
   }
 
   private async collect(
-    sections: { key: string; sql: string }[],
+    sections: Section[],
     subject: Record<string, string | null>,
   ): Promise<DataExport> {
     const data: Record<string, unknown[]> = {};
-    for (const s of sections)
-      data[s.key] = await this.ds.query(...bind(s.sql, subject));
+    for (const s of sections) {
+      const rows: Record<string, unknown>[] = await this.ds.query(
+        ...bind(s.sql, subject),
+      );
+      data[s.key] = s.table ? rows.map((r) => decryptRow(s.table!, r)) : rows;
+    }
     return {
       subject,
       generatedAt: new Date().toISOString(),

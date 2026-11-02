@@ -13,6 +13,9 @@ import { OneTimeTokenType } from './entities/one-time-token.entity';
 import { MfaService } from './mfa.service';
 import { TokenService } from './token.service';
 
+// argon2 is deliberately slow; under a loaded CI runner 5 s isn't always enough.
+jest.setTimeout(20_000);
+
 describe('AuthService', () => {
   let service: AuthService;
   let users: jest.Mocked<

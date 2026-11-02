@@ -19,10 +19,10 @@ echo ".env"
 if [[ ! -f .env ]]; then bad ".env not found (copy .env.example)"; else
   [[ "$(val NODE_ENV)" == production ]] && ok "NODE_ENV=production" || bad "NODE_ENV must be production"
   for k in DOMAIN ACME_EMAIL DB_USERNAME DB_PASSWORD DB_NAME REDIS_PASSWORD \
-           JWT_ACCESS_SECRET JWT_REFRESH_SECRET MFA_ENCRYPTION_KEY CORS_ORIGINS APP_URL; do
+           JWT_ACCESS_SECRET JWT_REFRESH_SECRET MFA_ENCRYPTION_KEY FIELD_ENCRYPTION_KEY CORS_ORIGINS APP_URL; do
     [[ -n "$(val "$k")" ]] && ok "$k set" || bad "$k is empty"
   done
-  for k in JWT_ACCESS_SECRET JWT_REFRESH_SECRET MFA_ENCRYPTION_KEY; do
+  for k in JWT_ACCESS_SECRET JWT_REFRESH_SECRET MFA_ENCRYPTION_KEY FIELD_ENCRYPTION_KEY; do
     v="$(val "$k")"; [[ ${#v} -ge 32 ]] || bad "$k shorter than 32 characters"
     [[ "$v" == *change-me* ]] && bad "$k is still a placeholder"
   done

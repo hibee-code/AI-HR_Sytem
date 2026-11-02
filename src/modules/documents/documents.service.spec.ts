@@ -23,6 +23,8 @@ import {
   DocumentCategory,
   DocumentVisibility,
 } from './entities/document.entity';
+import { Logger } from 'nestjs-pino';
+import { MALWARE_SCANNER } from '../../infrastructure/security/malware-scanner';
 
 const actor = (o: Partial<AuthUser> = {}): AuthUser => ({
   id: 'u-emp',
@@ -47,8 +49,20 @@ const pdf = (size = 1000): UploadedFile => ({
   originalname: 'a.pdf',
   mimetype: 'application/pdf',
   size,
-  buffer: Buffer.alloc(size, 1),
+  // real PDF header, then padding — content is checked against the type
+  buffer: Buffer.concat([
+    Buffer.from('%PDF-1.7\n'),
+    Buffer.alloc(size, 1),
+  ]).subarray(0, size),
 });
+
+const scanner: {
+  enabled: boolean;
+  scan: jest.Mock<Promise<{ clean: boolean; signature?: string }>>;
+} = {
+  enabled: true,
+  scan: jest.fn(async () => ({ clean: true })),
+};
 
 describe('DocumentsService', () => {
   let service: DocumentsService;
@@ -105,6 +119,8 @@ describe('DocumentsService', () => {
         { provide: STORAGE_SERVICE, useValue: storage },
         { provide: EmployeesService, useValue: employees },
         { provide: EventEmitter2, useValue: { emit: jest.fn() } },
+        { provide: MALWARE_SCANNER, useValue: scanner },
+        { provide: Logger, useValue: { warn: jest.fn(), error: jest.fn() } },
         {
           provide: ConfigService,
           useValue: {
@@ -141,6 +157,37 @@ describe('DocumentsService', () => {
         currentVersionId: 'v1',
         kbIndexedAt: null,
       });
+    });
+
+    it('rejects a file whose content is not what it claims (e.g. an .exe sent as PDF)', async () => {
+      await expect(
+        service.create(
+          { ...pdf(), buffer: Buffer.from([0x4d, 0x5a, 0x90, 0x00]) },
+          { title: 'x', category: DocumentCategory.OTHER },
+          HR,
+        ),
+      ).rejects.toThrow(/not a valid application\/pdf/);
+      expect(storage.objects.size).toBe(0);
+    });
+
+    it('rejects malware, and fails closed when the scanner is down', async () => {
+      scanner.scan.mockResolvedValueOnce({ clean: false, signature: 'Eicar' });
+      await expect(
+        service.create(
+          pdf(),
+          { title: 'x', category: DocumentCategory.OTHER },
+          HR,
+        ),
+      ).rejects.toThrow(/malware scanner/);
+      scanner.scan.mockRejectedValueOnce(new Error('ClamAV unavailable'));
+      await expect(
+        service.create(
+          pdf(),
+          { title: 'x', category: DocumentCategory.OTHER },
+          HR,
+        ),
+      ).rejects.toThrow(/scanning is unavailable/);
+      expect(storage.objects.size).toBe(0);
     });
 
     it('rejects oversized and unsupported files before touching storage', async () => {
@@ -334,7 +381,9 @@ describe('DocumentsService', () => {
       originalname: 'me.png',
       mimetype: 'image/png',
       size: 10,
-      buffer: Buffer.alloc(10),
+      buffer: Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0,
+      ]),
     });
     expect([...storage.objects.values()][0].options.access).toBe('public');
     expect(employees.updateProfile).toHaveBeenCalledWith('e1', {

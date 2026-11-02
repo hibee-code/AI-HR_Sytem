@@ -30,7 +30,10 @@ export class MfaService {
     private readonly users: UsersService,
     private readonly rbac: RbacService,
   ) {
-    this.box = new SecretBox(config.get('MFA_ENCRYPTION_KEY', { infer: true }));
+    this.box = new SecretBox(
+      config.get('MFA_ENCRYPTION_KEY', { infer: true }),
+      [config.get('MFA_ENCRYPTION_KEY_PREVIOUS', { infer: true })],
+    );
     this.requiredRoles = new Set(
       config.get('MFA_REQUIRED_ROLES', { infer: true }),
     );

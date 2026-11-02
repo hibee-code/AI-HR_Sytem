@@ -35,11 +35,14 @@ const activeUser = {
 };
 
 describe('JwtAuthGuard', () => {
-  let tokens: { verifyAccessToken: jest.Mock };
+  let tokens: { verifyAccessToken: jest.Mock; isSessionRevoked: jest.Mock };
   let rbac: { getAuthUser: jest.Mock };
 
   beforeEach(() => {
-    tokens = { verifyAccessToken: jest.fn() };
+    tokens = {
+      verifyAccessToken: jest.fn(),
+      isSessionRevoked: jest.fn(async () => false),
+    };
     rbac = { getAuthUser: jest.fn() };
   });
 
@@ -139,6 +142,20 @@ describe('JwtAuthGuard', () => {
     });
     const { reflector, context } = ctx({ authorization: 'Bearer good' });
     await expect(guard(reflector).canActivate(context)).resolves.toBe(true);
+  });
+
+  it('rejects the access token of a signed-out session', async () => {
+    tokens.verifyAccessToken.mockResolvedValue({
+      sub: 'u1',
+      email: 'a@b.c',
+      sid: 'f1',
+    });
+    tokens.isSessionRevoked.mockResolvedValue(true);
+    rbac.getAuthUser.mockResolvedValue(activeUser);
+    const { reflector, context } = ctx({ authorization: 'Bearer good' });
+    await expect(guard(reflector).canActivate(context)).rejects.toThrow(
+      /signed out/,
+    );
   });
 
   describe('mandatory MFA', () => {

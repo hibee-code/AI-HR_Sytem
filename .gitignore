@@ -44,3 +44,6 @@ lerna-debug.log*
 
 # database dumps (docker-compose.prod.yml backup service)
 /backups
+
+# downloaded Hugging Face models (local embeddings)
+/.models

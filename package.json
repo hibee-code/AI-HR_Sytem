@@ -34,26 +34,28 @@
     "seed:admin": "node dist/database/seeds/run-seed.js --bootstrap-admin",
     "postman": "node scripts/postman.mjs",
     "account:recover": "node dist/cli/recover-account.js",
-    "migrate:prod": "node dist/database/migrate.js"
+    "migrate:prod": "node dist/database/migrate.js",
+    "secrets:reencrypt": "node dist/cli/reencrypt-secrets.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.127.0",
     "@bull-board/api": "^9.10.1",
     "@bull-board/express": "^9.10.1",
     "@huggingface/inference": "^4.13.30",
+    "@huggingface/transformers": "^4.3.1",
     "@langchain/core": "^1.2.12",
     "@langchain/textsplitters": "^1.0.1",
     "@nestjs/bullmq": "^12.0.0",
-    "@nestjs/common": "^12.0.1",
-    "@nestjs/config": "^12.0.0",
-    "@nestjs/core": "^12.0.1",
+    "@nestjs/common": "^12.2.0",
+    "@nestjs/config": "^12.0.1",
+    "@nestjs/core": "^12.2.0",
     "@nestjs/event-emitter": "^12.0.1",
-    "@nestjs/jwt": "^12.0.2",
-    "@nestjs/platform-express": "^12.0.1",
-    "@nestjs/swagger": "^12.0.1",
-    "@nestjs/terminus": "^12.0.0",
+    "@nestjs/jwt": "^12.0.3",
+    "@nestjs/platform-express": "^12.2.0",
+    "@nestjs/swagger": "^12.0.4",
+    "@nestjs/terminus": "^12.1.0",
     "@nestjs/throttler": "^6.7.0",
-    "@nestjs/typeorm": "^12.0.1",
+    "@nestjs/typeorm": "^12.0.2",
     "@slack/web-api": "^8.1.1",
     "argon2": "^0.45.1",
     "bullmq": "^6.3.6",
@@ -77,9 +79,9 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@nestjs/cli": "^12.0.0",
-    "@nestjs/schematics": "^12.0.0",
-    "@nestjs/testing": "^12.0.1",
+    "@nestjs/cli": "^12.0.10",
+    "@nestjs/schematics": "^12.0.10",
+    "@nestjs/testing": "^12.2.0",
     "@types/express": "^5.0.0",
     "@types/jest": "^30.0.0",
     "@types/multer": "^2.2.0",
@@ -116,5 +118,9 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
+  },
+  "overrides": {
+    "multer": "^2.5.0",
+    "sharp": "^0.35.5"
   }
 }

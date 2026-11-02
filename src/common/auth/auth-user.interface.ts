@@ -22,6 +22,8 @@ export interface AccessTokenPayload {
   /** user id */
   sub: string;
   email: string;
+  /** session id = refresh-token family; lets one device be signed out */
+  sid?: string;
   /** issued-at (seconds) — set by the JWT lib, read back for password-change invalidation */
   iat?: number;
   exp?: number;

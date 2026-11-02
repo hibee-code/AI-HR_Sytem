@@ -53,6 +53,9 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException('Invalid or expired token');
     }
 
+    if (await this.tokens.isSessionRevoked(payload.sid))
+      throw new UnauthorizedException('Session was signed out');
+
     const user = await this.rbac.getAuthUser(payload.sub);
     if (!user) throw new UnauthorizedException('User no longer exists');
     if (user.status !== UserStatus.ACTIVE)
@@ -81,6 +84,7 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     req.user = user;
+    (req as Request & { sessionId?: string }).sessionId = payload.sid;
     return true;
   }
 }

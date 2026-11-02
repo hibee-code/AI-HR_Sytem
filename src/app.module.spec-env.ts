@@ -14,7 +14,9 @@ Object.assign(process.env, {
   WORKERS_ENABLED: 'false',
   STORAGE_DRIVER: 'memory',
   AI_DRIVER: 'fake',
+  EMBEDDINGS_DRIVER: 'fake',
   JWT_ACCESS_SECRET: 'a'.repeat(32),
   JWT_REFRESH_SECRET: 'b'.repeat(32),
   MFA_ENCRYPTION_KEY: 'c'.repeat(32),
+  FIELD_ENCRYPTION_KEY: 'f'.repeat(32),
 });

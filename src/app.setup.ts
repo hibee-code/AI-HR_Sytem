@@ -20,7 +20,12 @@ export function configureApp(app: INestApplication): void {
   const prefix = config.get('API_PREFIX', { infer: true });
 
   // ── HTTP hardening ────────────────────────────────────────────────────
-  (app as NestExpressApplication).set('trust proxy', 1); // real client IPs behind a proxy
+  const express = app as NestExpressApplication;
+  express.set('trust proxy', 1); // real client IPs behind a proxy
+  // Explicit body limits (uploads are multipart and capped per file elsewhere).
+  const limit = config.get('HTTP_BODY_LIMIT', { infer: true });
+  express.useBodyParser('json', { limit });
+  express.useBodyParser('urlencoded', { limit, extended: false });
   app.use(helmet());
   app.enableCors({
     origin: config.get('CORS_ORIGINS', { infer: true }),

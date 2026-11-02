@@ -138,6 +138,7 @@ export class KnowledgeBaseService {
       vectors.push(
         ...(await this.embeddings.embed(
           pieces.slice(i, i + EMBED_BATCH).map((p) => p.content),
+          'document',
         )),
       );
     }
@@ -228,7 +229,7 @@ export class KnowledgeBaseService {
     k = this.topK,
     floor = this.floor,
   ): Promise<RetrievedChunk[]> {
-    const [vector] = await this.embeddings.embed([query]);
+    const [vector] = await this.embeddings.embed([query], 'query');
     const rows: {
       id: string;
       document_id: string;

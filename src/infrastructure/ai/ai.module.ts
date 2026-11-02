@@ -14,6 +14,7 @@ import { FakeEmbeddingsProvider } from './fake-embeddings.provider';
 import { FallbackChatModel } from './fallback-chat-model';
 import { HfChatAdapter } from './hf-chat.adapter';
 import { HfEmbeddingsProvider } from './hf-embeddings.provider';
+import { LocalEmbeddingsProvider } from './local-embeddings.provider';
 import { OpenAiChatAdapter } from './openai-chat.adapter';
 
 /**
@@ -28,18 +29,34 @@ import { OpenAiChatAdapter } from './openai-chat.adapter';
       inject: [ConfigService],
       useFactory: (config: ConfigService<Env, true>) => {
         const dims = config.get('EMBEDDING_DIMENSIONS', { infer: true });
-        if (config.get('AI_DRIVER', { infer: true }) === 'fake')
-          return new FakeEmbeddingsProvider(dims);
-        const token = config.get('HF_API_TOKEN', { infer: true });
-        if (!token)
-          throw new Error(
-            'HF_API_TOKEN is required for embeddings when AI_DRIVER=live',
-          );
-        return new HfEmbeddingsProvider(
-          token,
-          config.get('HF_EMBEDDING_MODEL', { infer: true }),
-          dims,
-        );
+        switch (config.get('EMBEDDINGS_DRIVER', { infer: true })) {
+          case 'fake':
+            return new FakeEmbeddingsProvider(dims);
+          case 'huggingface': {
+            const token = config.get('HF_API_TOKEN', { infer: true });
+            if (!token)
+              throw new Error(
+                'HF_API_TOKEN is required when EMBEDDINGS_DRIVER=huggingface',
+              );
+            return new HfEmbeddingsProvider(
+              token,
+              config.get('HF_EMBEDDING_MODEL', { infer: true }),
+              dims,
+            );
+          }
+          case 'local':
+            return new LocalEmbeddingsProvider(
+              config.get('LOCAL_EMBEDDING_MODEL', { infer: true }),
+              dims,
+              config.get('EMBEDDINGS_CACHE_DIR', { infer: true }),
+              {
+                query: config.get('EMBEDDING_QUERY_PREFIX', { infer: true }),
+                document: config.get('EMBEDDING_DOCUMENT_PREFIX', {
+                  infer: true,
+                }),
+              },
+            );
+        }
       },
     },
     {
@@ -67,6 +84,16 @@ import { OpenAiChatAdapter } from './openai-chat.adapter';
           openai: new OpenAiChatAdapter(
             config.get('OPENAI_API_KEY', { infer: true }),
             config.get('OPENAI_MODEL', { infer: true }),
+          ),
+          // Open model on an OpenAI-compatible server (Ollama). Unset URL = skipped.
+          local: new OpenAiChatAdapter(
+            undefined,
+            config.get('LOCAL_LLM_MODEL', { infer: true }),
+            {
+              baseURL: config.get('LOCAL_LLM_BASE_URL', { infer: true }),
+              provider: 'local',
+              timeoutMs: 180_000, // CPU inference is slow
+            },
           ),
         };
         const chain = config

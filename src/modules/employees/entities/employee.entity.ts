@@ -5,6 +5,7 @@ import { SoftDeletableEntity } from '../../../common/entities/base.entity';
 import { User } from '../../users/entities/user.entity';
 import { Department } from './department.entity';
 import { Position } from './position.entity';
+import { encrypted } from '../../../common/security/field-encryption';
 
 export enum EmployeeStatus {
   /** Hired, pre-start or mid-onboarding checklist. */
@@ -85,27 +86,42 @@ export class Employee extends SoftDeletableEntity {
 
   @ApiProperty({ nullable: true })
   @Expose({ groups: [SERIALIZE_FULL] })
-  @Column({ name: 'personal_email', type: 'citext', nullable: true })
+  @Column({
+    name: 'personal_email',
+    type: 'text',
+    nullable: true,
+    transformer: encrypted.string,
+  })
   personalEmail: string | null;
 
   @ApiProperty({ nullable: true })
   @Expose({ groups: [SERIALIZE_FULL] })
-  @Column({ type: 'varchar', length: 30, nullable: true })
+  @Column({ type: 'text', nullable: true, transformer: encrypted.string })
   phone: string | null;
 
   @ApiProperty({ nullable: true, example: '1990-05-14' })
   @Expose({ groups: [SERIALIZE_FULL] })
-  @Column({ name: 'date_of_birth', type: 'date', nullable: true })
+  @Column({
+    name: 'date_of_birth',
+    type: 'text',
+    nullable: true,
+    transformer: encrypted.string,
+  })
   dateOfBirth: string | null;
 
   @ApiProperty({ nullable: true })
   @Expose({ groups: [SERIALIZE_FULL] })
-  @Column({ type: 'jsonb', nullable: true })
+  @Column({ type: 'text', nullable: true, transformer: encrypted.json })
   address: PostalAddress | null;
 
   @ApiProperty({ nullable: true })
   @Expose({ groups: [SERIALIZE_FULL] })
-  @Column({ name: 'emergency_contact', type: 'jsonb', nullable: true })
+  @Column({
+    name: 'emergency_contact',
+    type: 'text',
+    nullable: true,
+    transformer: encrypted.json,
+  })
   emergencyContact: EmergencyContact | null;
 
   @ApiProperty({ nullable: true })

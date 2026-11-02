@@ -5,10 +5,13 @@ import {
   Injectable,
   NotFoundException,
   PayloadTooLargeException,
+  ServiceUnavailableException,
+  UnprocessableEntityException,
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { Logger } from 'nestjs-pino';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash } from 'node:crypto';
 import { Brackets, Repository } from 'typeorm';
@@ -33,6 +36,9 @@ import {
   DocumentCategory,
   DocumentVisibility,
 } from './entities/document.entity';
+import { contentMatchesType } from '../../common/files/file-signature';
+import { MALWARE_SCANNER } from '../../infrastructure/security/malware-scanner';
+import type { MalwareScanner } from '../../infrastructure/security/malware-scanner';
 
 export const DOCUMENT_EVENTS = { CHANGED: 'document.changed' } as const;
 export interface DocumentChangedEvent {
@@ -80,6 +86,8 @@ export class DocumentsService {
     @Inject(STORAGE_SERVICE) private readonly storage: StorageService,
     private readonly employees: EmployeesService,
     private readonly events: EventEmitter2,
+    @Inject(MALWARE_SCANNER) private readonly scanner: MalwareScanner,
+    private readonly logger: Logger,
     config: ConfigService<Env, true>,
   ) {
     this.maxBytes = config.get('MAX_UPLOAD_MB', { infer: true }) * 1024 * 1024;
@@ -93,7 +101,7 @@ export class DocumentsService {
     dto: CreateDocumentDto,
     actor: AuthUser,
   ): Promise<Document> {
-    this.validateFile(file, ALLOWED_DOCUMENT_MIME);
+    await this.validateUpload(file, ALLOWED_DOCUMENT_MIME);
     const isHr = actor.permissions.includes(PERMISSIONS.DOCUMENT_MANAGE);
     const visibility = dto.visibility ?? DocumentVisibility.PRIVATE;
 
@@ -163,7 +171,7 @@ export class DocumentsService {
     file: UploadedFile;
     createdByUserId: string | null;
   }): Promise<Document> {
-    this.validateFile(input.file, ALLOWED_DOCUMENT_MIME);
+    await this.validateUpload(input.file, ALLOWED_DOCUMENT_MIME);
     const doc = await this.documents.save(
       this.documents.create({
         ownerEmployeeId: input.ownerEmployeeId,
@@ -188,7 +196,7 @@ export class DocumentsService {
   ): Promise<Document> {
     const doc = await this.findById(id);
     this.assertCanEdit(doc, actor);
-    this.validateFile(file, ALLOWED_DOCUMENT_MIME);
+    await this.validateUpload(file, ALLOWED_DOCUMENT_MIME);
     const next =
       (doc.versions.reduce((m, v) => Math.max(m, v.version), 0) || 0) + 1;
     await this.storeVersion(doc, file, actor.id, next);
@@ -376,7 +384,7 @@ export class DocumentsService {
     employeeId: string,
     file: UploadedFile,
   ): Promise<Employee> {
-    this.validateFile(file, ALLOWED_PHOTO_MIME, 5 * 1024 * 1024);
+    await this.validateUpload(file, ALLOWED_PHOTO_MIME, 5 * 1024 * 1024);
     const emp = await this.employees.findById(employeeId);
     const stored = await this.storage.upload(file.buffer, {
       folder: `employees/${employeeId}/photo`,
@@ -428,11 +436,15 @@ export class DocumentsService {
     return v;
   }
 
-  private validateFile(
+  /**
+   * Size, declared type, real content (magic bytes) and a malware scan —
+   * every upload path goes through here before anything is stored.
+   */
+  private async validateUpload(
     file: UploadedFile | undefined,
     allowed: Set<string>,
     maxBytes = this.maxBytes,
-  ): void {
+  ): Promise<void> {
     if (!file)
       throw new BadRequestException(
         'A file is required (multipart field "file")',
@@ -445,6 +457,34 @@ export class DocumentsService {
       throw new UnsupportedMediaTypeException(
         `Unsupported file type ${file.mimetype}`,
       );
+    if (!contentMatchesType(file.buffer, file.mimetype))
+      throw new UnsupportedMediaTypeException(
+        `File content is not a valid ${file.mimetype}`,
+      );
+    if (this.scanner.enabled) {
+      let result;
+      try {
+        result = await this.scanner.scan(file.buffer);
+      } catch (err) {
+        // Fail closed: never store a file we couldn't scan.
+        this.logger.error(
+          { err: (err as Error).message },
+          'malware scan failed',
+        );
+        throw new ServiceUnavailableException(
+          'Upload scanning is unavailable; please try again shortly',
+        );
+      }
+      if (!result.clean) {
+        this.logger.warn(
+          { signature: result.signature, name: file.originalname },
+          'malware upload rejected',
+        );
+        throw new UnprocessableEntityException(
+          'The file was rejected by the malware scanner',
+        );
+      }
+    }
   }
 
   private assertCanEdit(doc: Document, actor: AuthUser): void {

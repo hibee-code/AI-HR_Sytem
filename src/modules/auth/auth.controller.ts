@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -20,7 +21,10 @@ import type { AuthUser } from '../../common/auth/auth-user.interface';
 import { Client } from '../../common/decorators/client-info.decorator';
 import type { ClientInfo } from '../../common/decorators/client-info.decorator';
 import { AllowWithoutMfa } from '../../common/decorators/allow-without-mfa.decorator';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import {
+  CurrentSession,
+  CurrentUser,
+} from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
 import { PERMISSIONS } from '../rbac/permissions.catalogue';
@@ -41,6 +45,7 @@ import {
   TokenPairResponse,
 } from './dto/auth.dto';
 import { MfaService } from './mfa.service';
+import { TokenService } from './token.service';
 import type { IssuedTokens } from './token.service';
 import { Audit } from '../audit/audit.decorator';
 
@@ -53,6 +58,7 @@ export class AuthController {
   constructor(
     private readonly auth: AuthService,
     private readonly mfa: MfaService,
+    private readonly tokens: TokenService,
   ) {}
 
   @Public()
@@ -154,6 +160,31 @@ export class AuthController {
   @ApiOperation({ summary: 'Revoke this device’s refresh token (idempotent)' })
   logout(@Body() dto: RefreshTokenDto) {
     return this.auth.logout(dto.refreshToken);
+  }
+
+  @ApiBearerAuth('access-token')
+  @AllowWithoutMfa()
+  @Get('sessions')
+  @ApiOperation({
+    summary: 'Your signed-in devices (current one flagged); revoke any below',
+  })
+  sessions(@CurrentUser('id') userId: string, @CurrentSession() sid?: string) {
+    return this.tokens.listSessions(userId, sid);
+  }
+
+  @ApiBearerAuth('access-token')
+  @AllowWithoutMfa()
+  @Delete('sessions/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Audit('auth.session.revoke', 'session')
+  @ApiOperation({
+    summary: 'Sign one device out — its access token stops working at once',
+  })
+  revokeSession(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.tokens.revokeSession(userId, id);
   }
 
   @ApiBearerAuth('access-token')

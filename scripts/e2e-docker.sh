@@ -42,11 +42,11 @@ export DB_USERNAME="$TEST_DB_USERNAME" DB_PASSWORD="$TEST_DB_PASSWORD"
 export DB_NAME="$TEST_DB_NAME" DB_TEST_NAME="$TEST_DB_NAME"
 export REDIS_HOST=127.0.0.1 REDIS_PORT=6380 REDIS_PASSWORD="$TEST_REDIS_PASSWORD" REDIS_DB=0
 export SLACK_BOT_TOKEN= SMTP_HOST=127.0.0.1 SMTP_USER= SMTP_PASSWORD=
-export STORAGE_DRIVER=memory AI_DRIVER=fake THROTTLE_ENABLED=false
+export STORAGE_DRIVER=memory AI_DRIVER=fake EMBEDDINGS_DRIVER=fake THROTTLE_ENABLED=false
 export HF_API_TOKEN= ANTHROPIC_API_KEY= OPENAI_API_KEY=
 # Signing / encryption keys are only meaningful for one run: always fresh.
 export JWT_ACCESS_SECRET="$(random_secret)" JWT_REFRESH_SECRET="$(random_secret)"
-export MFA_ENCRYPTION_KEY="$(random_secret)"
+export MFA_ENCRYPTION_KEY="$(random_secret)" FIELD_ENCRYPTION_KEY="$(random_secret)"
 # The suites log in as ADMIN everywhere; MFA enforcement has its own tests.
 export MFA_REQUIRED_ROLES=
 

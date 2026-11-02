@@ -25,6 +25,11 @@ export const envSchema = z.object({
   API_PREFIX: z.string().default('api'),
   APP_NAME: z.string().default('HR System'),
   APP_URL: z.url().default('http://localhost:3000'),
+  /** Max JSON / form body size (multipart uploads have their own limits). */
+  HTTP_BODY_LIMIT: z
+    .string()
+    .regex(/^\d+(b|kb|mb)$/, 'e.g. 1mb')
+    .default('1mb'),
   CORS_ORIGINS: z
     .string()
     .default('http://localhost:3000')
@@ -89,11 +94,18 @@ export const envSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(32, 'must be at least 32 characters'),
   JWT_ACCESS_TTL: duration.default('15m'),
   JWT_REFRESH_SECRET: z.string().min(32, 'must be at least 32 characters'),
+  /** Still accepted for verification while rotating (keep for one token lifetime). */
+  JWT_ACCESS_SECRET_PREVIOUS: z.string().min(32).optional(),
+  JWT_REFRESH_SECRET_PREVIOUS: z.string().min(32).optional(),
   JWT_REFRESH_TTL: duration.default('7d'),
 
   // ── MFA & lockout ─────────────────────────────────────────────────────
-  /** Encrypts TOTP seeds at rest. Changing it invalidates every enrolled authenticator. */
+  /** Encrypts TOTP seeds at rest. Rotate via MFA_ENCRYPTION_KEY_PREVIOUS + secrets:reencrypt. */
   MFA_ENCRYPTION_KEY: z.string().min(32, 'must be at least 32 characters'),
+  MFA_ENCRYPTION_KEY_PREVIOUS: z.string().min(32).optional(),
+  /** Encrypts personal and pay fields at rest (employees, salary structures). */
+  FIELD_ENCRYPTION_KEY: z.string().min(32, 'must be at least 32 characters'),
+  FIELD_ENCRYPTION_KEY_PREVIOUS: z.string().min(32).optional(),
   /** Roles that must enrol in MFA before using the API (comma-separated; empty = none). */
   MFA_REQUIRED_ROLES: z
     .string()
@@ -129,6 +141,11 @@ export const envSchema = z.object({
   CLOUDINARY_CLOUD_NAME: z.string().optional(),
   CLOUDINARY_API_KEY: z.string().optional(),
   CLOUDINARY_API_SECRET: z.string().optional(),
+  /** clamd (ClamAV) for upload scanning; required in production unless disabled. */
+  CLAMAV_HOST: z.string().optional(),
+  CLAMAV_PORT: port.default(3310),
+  /** Explicit opt-out (e.g. a VPS without RAM for ClamAV). Logged as a warning. */
+  MALWARE_SCAN_DISABLED: bool,
   MAX_UPLOAD_MB: z.coerce.number().int().min(1).max(100).default(10),
   /** Lifetime of signed download links. */
   DOWNLOAD_URL_TTL_SECONDS: z.coerce
@@ -171,6 +188,17 @@ export const envSchema = z.object({
   /** fake = deterministic in-process embeddings + chat (tests, offline dev). */
   AI_DRIVER: z.enum(['live', 'fake']).default('live'),
   HF_API_TOKEN: z.string().optional(),
+  /**
+   * local = open model run in-process (free, default); huggingface = HF
+   * Inference API (needs credits); fake = deterministic hash (tests only).
+   */
+  EMBEDDINGS_DRIVER: z.enum(['local', 'huggingface', 'fake']).default('local'),
+  /** ONNX build on the Hub; must output EMBEDDING_DIMENSIONS values. */
+  LOCAL_EMBEDDING_MODEL: z.string().default('Xenova/all-MiniLM-L6-v2'),
+  EMBEDDINGS_CACHE_DIR: z.string().default('./.models'),
+  /** Model-card prefixes, e.g. bge: query "Represent this sentence for searching relevant passages: "; e5: "query: " / "passage: ". */
+  EMBEDDING_QUERY_PREFIX: z.string().default(''),
+  EMBEDDING_DOCUMENT_PREFIX: z.string().default(''),
   HF_EMBEDDING_MODEL: z
     .string()
     .default('sentence-transformers/all-MiniLM-L6-v2'),
@@ -184,6 +212,9 @@ export const envSchema = z.object({
     .default('medium'),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default('gpt-4o'),
+  /** Any OpenAI-compatible server with an open model, e.g. Ollama: http://ollama:11434/v1 */
+  LOCAL_LLM_BASE_URL: z.string().optional(),
+  LOCAL_LLM_MODEL: z.string().default('qwen2.5:3b-instruct'),
   /** Fallback order; unconfigured providers are skipped. */
   AI_CHAT_PROVIDERS: z
     .string()
@@ -194,7 +225,9 @@ export const envSchema = z.object({
         .map((p) => p.trim().toLowerCase())
         .filter(Boolean),
     )
-    .pipe(z.array(z.enum(['huggingface', 'anthropic', 'openai'])).min(1)),
+    .pipe(
+      z.array(z.enum(['huggingface', 'anthropic', 'openai', 'local'])).min(1),
+    ),
   AI_MAX_OUTPUT_TOKENS: z.coerce
     .number()
     .int()
@@ -265,6 +298,11 @@ export function validateEnv(raw: Record<string, unknown>): Env {
       d.STORAGE_DRIVER === 'memory' &&
         'STORAGE_DRIVER: "memory" loses every upload on restart',
       d.AI_DRIVER === 'fake' && 'AI_DRIVER: "fake" returns canned answers',
+      !d.CLAMAV_HOST &&
+        !d.MALWARE_SCAN_DISABLED &&
+        'CLAMAV_HOST: uploads must be malware-scanned (or set MALWARE_SCAN_DISABLED=true deliberately)',
+      d.EMBEDDINGS_DRIVER === 'fake' &&
+        'EMBEDDINGS_DRIVER: "fake" makes search meaningless',
     ].filter(Boolean);
     if (devOnly.length)
       throw new Error(
